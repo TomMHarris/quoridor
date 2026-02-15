@@ -36,16 +36,138 @@ from config import Config
 # Heuristic agents that play reasonable Quoridor
 # =====================================================================
 
+class MCTSExpert:
+    """
+    Strong expert using pure MCTS with heuristic rollouts.
+    This is essentially gorisanson's approach: no neural network,
+    just search + smart rollout policy. With 500-2000 rollouts
+    per move, this plays genuinely strong Quoridor.
+
+    The rollout policy follows shortest path 70% of the time
+    (exactly gorisanson's design) and places random probable
+    walls otherwise.
+    """
+
+    def __init__(self, num_rollouts: int = 500):
+        self.num_rollouts = num_rollouts
+
+    def choose_move(self, game: QuoridorGame) -> tuple:
+        player = game.current_player
+
+        # If we can win immediately, do it
+        if game.shortest_path_length(player) == 1:
+            path = game.shortest_path(player)
+            if path and len(path) > 1:
+                move = ("move", path[1])
+                if move in game.get_legal_pawn_moves():
+                    return move
+
+        # Get candidate moves: pawn moves + probable walls
+        pawn_moves = game.get_legal_pawn_moves()
+        try:
+            walls = game.get_probable_walls()
+        except AttributeError:
+            walls = game.get_legal_walls()
+
+        candidates = pawn_moves + walls
+        if not candidates:
+            return random.choice(game.get_legal_moves())
+
+        # Allocate rollouts across candidates
+        rollouts_per = max(1, self.num_rollouts // len(candidates))
+        best_move = None
+        best_score = -1
+
+        for move in candidates:
+            wins = 0
+            for _ in range(rollouts_per):
+                g = game.clone()
+                g.make_move(move)
+                result = self._heuristic_rollout(g, player)
+                wins += result
+            if wins > best_score:
+                best_score = wins
+                best_move = move
+
+        return best_move
+
+    def _heuristic_rollout(self, game: QuoridorGame, perspective: int,
+                           max_depth: int = 80) -> float:
+        """
+        Heuristic rollout following gorisanson's design:
+        - 70% of the time: move pawn along shortest path
+        - 30% of the time: place a random probable wall (if available)
+        - If no walls left: move backward (penalty for wall exhaustion)
+        """
+        depth = 0
+        while not game.is_over and depth < max_depth:
+            cp = game.current_player
+
+            if random.random() < 0.7:
+                # Follow shortest path
+                path = game.shortest_path(cp)
+                if path and len(path) > 1:
+                    move = ("move", path[1])
+                    legal_pawns = game.get_legal_pawn_moves()
+                    if move in legal_pawns:
+                        game.make_move(move)
+                        depth += 1
+                        continue
+                    # Path blocked by opponent pawn — try any pawn move
+                    if legal_pawns:
+                        game.make_move(random.choice(legal_pawns))
+                        depth += 1
+                        continue
+
+                # Fallback: random pawn move
+                pawn_moves = game.get_legal_pawn_moves()
+                if pawn_moves:
+                    game.make_move(random.choice(pawn_moves))
+                    depth += 1
+                    continue
+
+            # Wall placement (30% of the time)
+            if game.walls_remaining[cp] > 0:
+                try:
+                    walls = game.get_probable_walls()
+                except AttributeError:
+                    walls = game.get_legal_walls()
+                if walls:
+                    game.make_move(random.choice(walls))
+                    depth += 1
+                    continue
+
+            # No walls left — just move pawn
+            pawn_moves = game.get_legal_pawn_moves()
+            if pawn_moves:
+                game.make_move(random.choice(pawn_moves))
+            else:
+                moves = game.get_legal_moves()
+                if moves:
+                    game.make_move(random.choice(moves))
+                else:
+                    break
+            depth += 1
+
+        if game.winner == perspective:
+            return 1.0
+        elif game.winner is not None:
+            return 0.0
+        # Unfinished: evaluate by distance
+        d_me = game.shortest_path_length(perspective) or 9
+        d_opp = game.shortest_path_length(1 - perspective) or 9
+        if d_me < d_opp:
+            return 0.7
+        elif d_me > d_opp:
+            return 0.3
+        return 0.5
+
+
 class ExpertAgent:
     """
-    A strong heuristic agent that plays like a competent human:
-    - Usually advances along shortest path
-    - Sometimes places walls to block opponent's path
-    - Adapts wall placement to game state
-    - Makes the wall/move tradeoff based on relative distance
-
-    This isn't optimal play, but it's *reasonable* play — exactly
-    what the network needs to see to bootstrap past random noise.
+    Simpler heuristic agent for diversity in training data.
+    Follows shortest path, occasionally blocks opponent.
+    Weaker than MCTSExpert but faster and provides variety.
     """
 
     def choose_move(self, game: QuoridorGame) -> tuple:
@@ -65,19 +187,15 @@ class ExpertAgent:
                     return move
 
         # Decide: advance or place wall?
-        # Place wall if opponent is ahead or equal AND we have walls
         should_wall = False
         if my_walls > 0:
             if opp_dist is not None and my_dist is not None:
-                # Wall more likely when opponent is ahead
                 if opp_dist <= my_dist:
                     should_wall = random.random() < 0.5
                 elif opp_dist <= my_dist + 2:
                     should_wall = random.random() < 0.25
                 else:
                     should_wall = random.random() < 0.1
-
-                # Always try to wall if opponent is about to win
                 if opp_dist <= 2:
                     should_wall = random.random() < 0.7
 
@@ -86,15 +204,12 @@ class ExpertAgent:
             if wall:
                 return wall
 
-        # Default: advance along shortest path
         return self._advance(game, player)
 
     def _find_best_wall(self, game, player, opponent):
-        """Find a wall that maximally increases opponent's distance."""
         opp_dist_before = game.shortest_path_length(opponent)
         if opp_dist_before is None:
             return None
-
         opp_path = game.shortest_path(opponent)
         if not opp_path or len(opp_path) < 2:
             return None
@@ -102,7 +217,6 @@ class ExpertAgent:
         best_wall = None
         best_increase = 0
 
-        # Check walls near opponent's path
         for cell in opp_path[1:5]:
             tr, tc = cell
             for dr in range(-1, 2):
@@ -115,14 +229,12 @@ class ExpertAgent:
                             new_dist = g2.shortest_path_length(opponent)
                             if new_dist is not None:
                                 increase = new_dist - opp_dist_before
-                                # Also check we don't hurt ourselves too much
-                                my_new_dist = g2.shortest_path_length(player)
-                                my_old_dist = game.shortest_path_length(player)
-                                if my_new_dist is not None and my_old_dist is not None:
-                                    self_cost = my_new_dist - my_old_dist
-                                    net_benefit = increase - self_cost
-                                    if net_benefit > best_increase:
-                                        best_increase = net_benefit
+                                my_new = g2.shortest_path_length(player)
+                                my_old = game.shortest_path_length(player)
+                                if my_new is not None and my_old is not None:
+                                    net = increase - (my_new - my_old)
+                                    if net > best_increase:
+                                        best_increase = net
                                         best_wall = ("wall", (wr, wc, o))
 
         if best_wall and best_increase >= 1:
@@ -130,16 +242,12 @@ class ExpertAgent:
         return None
 
     def _advance(self, game, player):
-        """Move pawn along shortest path, with some randomness."""
         path = game.shortest_path(player)
         if path and len(path) > 1:
             move = ("move", path[1])
             if move in game.get_legal_pawn_moves():
-                # Usually follow shortest path, sometimes try alternatives
                 if random.random() < 0.85:
                     return move
-
-        # Random pawn move as fallback
         pawn_moves = game.get_legal_pawn_moves()
         if pawn_moves:
             return random.choice(pawn_moves)
@@ -150,85 +258,102 @@ class ExpertAgent:
 # Data generation
 # =====================================================================
 
+def _play_one_expert_game(args):
+    """Worker function for parallel expert game generation."""
+    game_idx, num_games, mcts_rollouts, use_mcts = args
+
+    if use_mcts:
+        agent = MCTSExpert(num_rollouts=mcts_rollouts)
+    else:
+        agent = ExpertAgent()
+
+    game = QuoridorGame(2)
+    trajectory = []
+    move_count = 0
+
+    while not game.is_over and move_count < 200:
+        state = game.to_tensor()
+        cp = game.current_player
+        move = agent.choose_move(game)
+        trajectory.append((state, move, cp))
+        game.make_move(move)
+        move_count += 1
+
+    winner = game.winner if game.winner is not None else -1
+
+    # Convert to training samples
+    samples = []
+    replay = QuoridorGame(2)
+    for state, move, cp in trajectory:
+        pawn_pos = replay.pawns[cp]
+        policy = np.zeros(MoveEncoder.TOTAL_ACTIONS, dtype=np.float32)
+        idx = MoveEncoder.encode(move, pawn_pos)
+        policy[idx] = 0.85
+        legal_mask = MoveEncoder.legal_mask(replay)
+        legal_mask[idx] = 0
+        n_other = legal_mask.sum()
+        if n_other > 0:
+            policy += (0.15 / n_other) * legal_mask
+
+        if winner == -1:
+            d0 = game.shortest_path_length(0) or 9
+            d1 = game.shortest_path_length(1) or 9
+            p0_adv = (d1 - d0) / (d0 + d1) if (d0 + d1) > 0 else 0
+            value = p0_adv if cp == 0 else -p0_adv
+        elif winner == cp:
+            value = 1.0
+        else:
+            value = -1.0
+
+        samples.append((state, policy, value))
+        replay.make_move(move)
+
+    tag = "MCTS" if use_mcts else "heur"
+    w = f"P{winner}" if winner >= 0 else "draw"
+    print(f"  Game {game_idx+1}/{num_games} [{tag}]: {move_count} moves, {w}")
+
+    return samples, winner
+
+
 def generate_expert_games(num_games: int = 1000,
                           max_moves: int = 200,
-                          verbose: bool = True) -> List[dict]:
+                          mcts_rollouts: int = 500,
+                          mcts_fraction: float = 0.7,
+                          num_workers: int = 4,
+                          verbose: bool = True) -> list:
     """
-    Play games between expert agents and record training data.
-    Returns list of (state_tensor, policy, value) samples.
+    Play games between expert agents in parallel.
+
+    70% MCTS games (strong), 30% heuristic games (fast, diverse).
     """
-    agent = ExpertAgent()
-    all_samples = []
-    total_moves = 0
-    wins = {0: 0, 1: 0, -1: 0}
+    import multiprocessing as mp
+
+    # Build argument list
+    args_list = []
+    for i in range(num_games):
+        use_mcts = random.random() < mcts_fraction
+        args_list.append((i, num_games, mcts_rollouts, use_mcts))
+
+    n_mcts = sum(1 for a in args_list if a[3])
+    n_heur = num_games - n_mcts
+    print(f"  Generating {num_games} games ({n_mcts} MCTS @ {mcts_rollouts} rollouts, "
+          f"{n_heur} heuristic) with {num_workers} workers")
 
     t0 = time.time()
 
-    for game_idx in range(num_games):
-        game = QuoridorGame(2)
-        trajectory = []  # (state, move_made, player)
-        move_count = 0
+    with mp.Pool(num_workers) as pool:
+        results = pool.map(_play_one_expert_game, args_list)
 
-        while not game.is_over and move_count < max_moves:
-            state = game.to_tensor()
-            cp = game.current_player
-            move = agent.choose_move(game)
-
-            trajectory.append((state, move, cp))
-            game.make_move(move)
-            move_count += 1
-
-        # Determine outcome
-        winner = game.winner if game.winner is not None else -1
+    all_samples = []
+    wins = {0: 0, 1: 0, -1: 0}
+    for samples, winner in results:
+        all_samples.extend(samples)
         wins[winner] = wins.get(winner, 0) + 1
-        total_moves += move_count
-
-        # Convert to training samples
-        pawn_pos_history = []
-        replay = QuoridorGame(2)
-        for state, move, cp in trajectory:
-            pawn_pos = replay.pawns[cp]
-
-            # Create policy: one-hot on the move that was played
-            # (softened slightly to avoid overconfident targets)
-            policy = np.zeros(MoveEncoder.TOTAL_ACTIONS, dtype=np.float32)
-            idx = MoveEncoder.encode(move, pawn_pos)
-            policy[idx] = 0.85
-
-            # Spread remaining 15% across other legal moves
-            legal_mask = MoveEncoder.legal_mask(replay)
-            legal_mask[idx] = 0  # exclude the played move
-            n_other = legal_mask.sum()
-            if n_other > 0:
-                policy += (0.15 / n_other) * legal_mask
-
-            # Value
-            if winner == -1:
-                d0 = game.shortest_path_length(0) or 9
-                d1 = game.shortest_path_length(1) or 9
-                p0_adv = (d1 - d0) / (d0 + d1) if (d0 + d1) > 0 else 0
-                value = p0_adv if cp == 0 else -p0_adv
-            elif winner == cp:
-                value = 1.0
-            else:
-                value = -1.0
-
-            all_samples.append((state, policy, value))
-            replay.make_move(move)
-
-        if verbose and (game_idx + 1) % 100 == 0:
-            elapsed = time.time() - t0
-            avg_len = total_moves / (game_idx + 1)
-            print(f"  {game_idx+1}/{num_games} games, "
-                  f"avg {avg_len:.0f} moves, "
-                  f"{elapsed:.1f}s, "
-                  f"P0:{wins[0]} P1:{wins[1]} draw:{wins[-1]}")
 
     elapsed = time.time() - t0
     print(f"\nGenerated {len(all_samples)} samples from {num_games} games "
-          f"in {elapsed:.1f}s")
-    print(f"  Avg game length: {total_moves/num_games:.0f} moves")
-    print(f"  P0 wins: {wins[0]}, P1 wins: {wins[1]}, draws: {wins[-1]}")
+          f"in {elapsed:.1f}s ({elapsed/num_games:.1f}s/game)")
+    print(f"  P0 wins: {wins[0]}, P1 wins: {wins[1]}, draws: {wins.get(-1, 0)}")
 
     return all_samples
 
@@ -366,9 +491,18 @@ def quick_test(network, device="cpu"):
 # =====================================================================
 
 if __name__ == "__main__":
+    import multiprocessing as mp
+    mp.set_start_method("spawn", force=True)
+
     parser = argparse.ArgumentParser(description="Pre-train on expert games")
     parser.add_argument("--games", type=int, default=1000,
                         help="Number of expert games to generate")
+    parser.add_argument("--rollouts", type=int, default=500,
+                        help="MCTS rollouts per move for expert (more = stronger, slower)")
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Parallel workers for game generation")
+    parser.add_argument("--fast", action="store_true",
+                        help="Fast mode: heuristic only (no MCTS), 100%% speed")
     parser.add_argument("--epochs", type=int, default=20,
                         help="Pre-training epochs")
     parser.add_argument("--generate-only", action="store_true",
@@ -376,10 +510,18 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="auto")
     args = parser.parse_args()
 
+    # Fast mode: all heuristic, no slow MCTS rollouts
+    mcts_frac = 0.0 if args.fast else 0.7
+
     print("=" * 60)
     print("  Phase 1: Generating expert games")
     print("=" * 60)
-    samples = generate_expert_games(num_games=args.games)
+    samples = generate_expert_games(
+        num_games=args.games,
+        mcts_rollouts=args.rollouts,
+        mcts_fraction=mcts_frac,
+        num_workers=args.workers,
+    )
 
     if not args.generate_only:
         print("\n" + "=" * 60)
