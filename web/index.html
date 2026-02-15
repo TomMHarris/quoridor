@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>quoridor</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FAF8F4;
+    --board-bg: #F0EBE0;
+    --board-border: #D4CFC4;
+    --groove: #DDD8CD;
+    --groove-hover: #C4A56E88;
+    --wall: #C4A56E;
+    --wall-edge: #A8894F;
+    --wall-placed: #B5944E;
+    --pawn-light: #F0DDB8;
+    --pawn-light-edge: #CEBB8E;
+    --pawn-dark: #5C3A1E;
+    --pawn-dark-edge: #3D2510;
+    --highlight: #C4A56E44;
+    --highlight-strong: #C4A56E88;
+    --text: #2C2C2C;
+    --text-light: #9C9688;
+    --text-mid: #6B665C;
+    --accent: #C03020;
+    --cell-size: min(60px, calc((100vw - 80px) / 9));
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 30px 20px;
+  }
+
+  h1 {
+    font-size: 2.8rem;
+    font-weight: 300;
+    letter-spacing: 0.15em;
+    margin-bottom: 4px;
+  }
+
+  .accent-line {
+    width: 120px;
+    height: 2px;
+    background: var(--accent);
+    margin: 0 auto 16px;
+  }
+
+  .status {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--text-mid);
+    margin-bottom: 24px;
+    min-height: 1.2em;
+    text-align: center;
+  }
+
+  .game-container {
+    display: flex;
+    gap: 40px;
+    align-items: flex-start;
+  }
+
+  /* ── Board ── */
+  .board-wrapper {
+    background: var(--board-bg);
+    border: 1px solid var(--board-border);
+    border-radius: 6px;
+    padding: 12px;
+    box-shadow: 0 2px 20px #00000008, 0 1px 4px #00000010;
+  }
+
+  .board {
+    display: grid;
+    grid-template-columns: repeat(17, auto);
+    grid-template-rows: repeat(17, auto);
+    gap: 0;
+    position: relative;
+  }
+
+  /* Cells (odd rows, odd cols in 17x17 grid) */
+  .cell {
+    width: var(--cell-size);
+    height: var(--cell-size);
+    background: var(--board-bg);
+    position: relative;
+    cursor: default;
+    transition: background 0.15s;
+    border-radius: 2px;
+  }
+
+  .cell.legal-move {
+    cursor: pointer;
+    background: var(--highlight);
+  }
+
+  .cell.legal-move:hover {
+    background: var(--highlight-strong);
+  }
+
+  /* Grooves — thin lines between cells */
+  .groove-h {
+    width: var(--cell-size);
+    height: 8px;
+    background: var(--groove);
+    position: relative;
+  }
+
+  .groove-v {
+    width: 8px;
+    height: var(--cell-size);
+    background: var(--groove);
+    position: relative;
+  }
+
+  .groove-cross {
+    width: 8px;
+    height: 8px;
+    background: var(--groove);
+  }
+
+  /* Wall placement hover zones */
+  .wall-zone {
+    position: absolute;
+    cursor: pointer;
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 0.15s;
+    border-radius: 3px;
+  }
+
+  .wall-zone:hover {
+    opacity: 1;
+    background: var(--groove-hover);
+  }
+
+  .wall-zone-h {
+    width: calc(var(--cell-size) * 2 + 8px);
+    height: 8px;
+    top: 0;
+    left: 0;
+  }
+
+  .wall-zone-v {
+    width: 8px;
+    height: calc(var(--cell-size) * 2 + 8px);
+    top: 0;
+    left: 0;
+  }
+
+  /* Placed walls */
+  .wall-placed {
+    position: absolute;
+    background: var(--wall);
+    border: 1px solid var(--wall-edge);
+    border-radius: 3px;
+    z-index: 10;
+    box-shadow: 1px 1px 3px #00000015;
+  }
+
+  .wall-h {
+    width: calc(var(--cell-size) * 2 + 8px);
+    height: 10px;
+    top: -1px;
+    left: 0;
+  }
+
+  .wall-v {
+    width: 10px;
+    height: calc(var(--cell-size) * 2 + 8px);
+    top: 0;
+    left: -1px;
+  }
+
+  /* Pawns */
+  .pawn {
+    position: absolute;
+    width: 70%;
+    height: 70%;
+    top: 15%;
+    left: 15%;
+    border-radius: 50%;
+    z-index: 20;
+    transition: all 0.3s ease;
+    box-shadow: 2px 2px 6px #00000020;
+  }
+
+  .pawn-light {
+    background: radial-gradient(circle at 40% 35%,
+      #FFF8EC 0%, var(--pawn-light) 60%, var(--pawn-light-edge) 100%);
+    border: 1.5px solid var(--pawn-light-edge);
+  }
+
+  .pawn-dark {
+    background: radial-gradient(circle at 40% 35%,
+      #7A5535 0%, var(--pawn-dark) 60%, var(--pawn-dark-edge) 100%);
+    border: 1.5px solid var(--pawn-dark-edge);
+  }
+
+  /* ── Side panel ── */
+  .panel {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-width: 180px;
+  }
+
+  .panel h2 {
+    font-size: 1.1rem;
+    font-weight: 400;
+    color: var(--text-mid);
+    font-style: italic;
+  }
+
+  .walls-display {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .walls-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .walls-row .pawn-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .walls-row .wall-pips {
+    display: flex;
+    gap: 3px;
+    flex-wrap: wrap;
+  }
+
+  .wall-pip {
+    width: 18px;
+    height: 6px;
+    background: var(--wall);
+    border-radius: 2px;
+    border: 0.5px solid var(--wall-edge);
+    opacity: 0.9;
+  }
+
+  .wall-pip.used {
+    opacity: 0.2;
+  }
+
+  .controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  button {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 0.95rem;
+    padding: 8px 16px;
+    background: var(--board-bg);
+    border: 1px solid var(--board-border);
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text);
+    transition: all 0.15s;
+  }
+
+  button:hover {
+    background: var(--groove);
+    border-color: var(--wall);
+  }
+
+  .mode-toggle {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-light);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .mode-toggle span {
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 3px;
+    transition: all 0.15s;
+  }
+
+  .mode-toggle span.active {
+    background: var(--wall);
+    color: white;
+  }
+
+  .game-info {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-light);
+    line-height: 1.6;
+  }
+
+  .winner-banner {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #00000060;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+
+  .winner-banner.show {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .winner-card {
+    background: var(--bg);
+    padding: 40px 60px;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 10px 40px #00000030;
+  }
+
+  .winner-card h2 {
+    font-size: 2rem;
+    font-weight: 300;
+    margin-bottom: 8px;
+  }
+
+  .winner-card p {
+    color: var(--text-mid);
+    font-style: italic;
+    margin-bottom: 20px;
+  }
+
+  .thinking {
+    display: inline-block;
+    animation: pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  @media (max-width: 700px) {
+    .game-container { flex-direction: column; align-items: center; }
+    :root { --cell-size: calc((100vw - 60px) / 9); }
+  }
+</style>
+</head>
+<body>
+
+<h1>quoridor</h1>
+<div class="accent-line"></div>
+<div class="status" id="status">click new game to start</div>
+
+<div class="game-container">
+  <div class="board-wrapper">
+    <div class="board" id="board"></div>
+  </div>
+
+  <div class="panel">
+    <div>
+      <h2>walls remaining</h2>
+      <div class="walls-display" id="walls-display"></div>
+    </div>
+
+    <div>
+      <h2>placement mode</h2>
+      <div class="mode-toggle" id="mode-toggle">
+        <span class="active" data-mode="move">move</span>
+        <span data-mode="wall-h">wall ─</span>
+        <span data-mode="wall-v">wall │</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button onclick="newGame(0)">new game (you go first)</button>
+      <button onclick="newGame(1)">new game (AI goes first)</button>
+    </div>
+
+    <div class="game-info" id="game-info"></div>
+  </div>
+</div>
+
+<div class="winner-banner" id="winner-banner">
+  <div class="winner-card">
+    <h2 id="winner-text"></h2>
+    <p id="winner-sub"></p>
+    <button onclick="closeBanner(); newGame(lastAiPlayer)">play again</button>
+  </div>
+</div>
+
+<script>
+const BOARD_SIZE = 9;
+let state = null;
+let mode = "move";
+let legalMoves = [];
+let lastAiPlayer = 1;
+let thinking = false;
+
+// ── Board rendering ──
+
+function buildBoard() {
+  const board = document.getElementById("board");
+  board.innerHTML = "";
+
+  // 17x17 grid: cells at even positions, grooves at odd
+  for (let gr = 0; gr < 17; gr++) {
+    for (let gc = 0; gc < 17; gc++) {
+      const el = document.createElement("div");
+
+      if (gr % 2 === 0 && gc % 2 === 0) {
+        // Cell
+        const r = gr / 2;
+        const c = gc / 2;
+        el.className = "cell";
+        el.dataset.r = r;
+        el.dataset.c = c;
+        el.addEventListener("click", () => onCellClick(r, c));
+      } else if (gr % 2 === 1 && gc % 2 === 0) {
+        // Horizontal groove (between rows)
+        const wr = (gr - 1) / 2;
+        const c = gc / 2;
+        el.className = "groove-h";
+        el.style.position = "relative";
+        // Wall placement zone (extends right)
+        if (c < 8) {
+          const zone = document.createElement("div");
+          zone.className = "wall-zone wall-zone-h";
+          zone.dataset.wr = wr;
+          zone.dataset.wc = c;
+          zone.dataset.wo = "H";
+          zone.addEventListener("click", (e) => {
+            e.stopPropagation();
+            onWallClick(wr, c, "H");
+          });
+          el.appendChild(zone);
+        }
+      } else if (gr % 2 === 0 && gc % 2 === 1) {
+        // Vertical groove
+        const r = gr / 2;
+        const wc = (gc - 1) / 2;
+        el.className = "groove-v";
+        el.style.position = "relative";
+        // Wall placement zone (extends down)
+        if (r < 8) {
+          const zone = document.createElement("div");
+          zone.className = "wall-zone wall-zone-v";
+          zone.dataset.wr = r;
+          zone.dataset.wc = wc;
+          zone.dataset.wo = "V";
+          zone.addEventListener("click", (e) => {
+            e.stopPropagation();
+            onWallClick(r, wc, "V");
+          });
+          el.appendChild(zone);
+        }
+      } else {
+        // Cross point
+        el.className = "groove-cross";
+      }
+
+      board.appendChild(el);
+    }
+  }
+}
+
+function render() {
+  if (!state) return;
+
+  // Clear previous pawns, walls, highlights
+  document.querySelectorAll(".pawn, .wall-placed").forEach(e => e.remove());
+  document.querySelectorAll(".cell").forEach(e => e.classList.remove("legal-move"));
+
+  // Place pawns
+  for (let p = 0; p < 2; p++) {
+    const pawn = state.pawns[p];
+    const cell = getCell(pawn.r, pawn.c);
+    if (cell) {
+      const el = document.createElement("div");
+      el.className = `pawn ${p === 0 ? "pawn-light" : "pawn-dark"}`;
+      cell.appendChild(el);
+    }
+  }
+
+  // Place walls
+  for (const w of state.walls) {
+    placeWallVisual(w.r, w.c, w.o);
+  }
+
+  // Highlight legal moves
+  if (mode === "move" && !thinking && state.winner === null &&
+      state.current_player !== state.ai_player) {
+    for (const m of legalMoves) {
+      const cell = getCell(m[0], m[1]);
+      if (cell) cell.classList.add("legal-move");
+    }
+  }
+
+  // Show wall zones only in wall mode
+  document.querySelectorAll(".wall-zone").forEach(z => {
+    z.style.display = (mode === "move" || thinking) ? "none" : "block";
+    if (mode === "wall-h") {
+      z.style.display = z.dataset.wo === "H" ? "block" : "none";
+    } else if (mode === "wall-v") {
+      z.style.display = z.dataset.wo === "V" ? "block" : "none";
+    }
+  });
+
+  // Update walls display
+  updateWallsDisplay();
+  updateGameInfo();
+
+  // Status
+  const statusEl = document.getElementById("status");
+  if (state.winner !== null) {
+    const isHuman = state.winner !== state.ai_player;
+    showWinner(isHuman);
+    statusEl.textContent = isHuman ? "you win!" : "AI wins";
+  } else if (thinking) {
+    statusEl.innerHTML = '<span class="thinking">AI thinking...</span>';
+  } else if (state.current_player === state.ai_player) {
+    statusEl.innerHTML = '<span class="thinking">AI thinking...</span>';
+  } else {
+    const modeText = mode === "move" ? "click a highlighted cell to move"
+                   : mode === "wall-h" ? "click a groove to place horizontal wall"
+                   : "click a groove to place vertical wall";
+    statusEl.textContent = modeText;
+  }
+}
+
+function placeWallVisual(wr, wc, orient) {
+  if (orient === "H") {
+    // Find the horizontal groove at (wr, wc)
+    const gr = wr * 2 + 1;
+    const gc = wc * 2;
+    const groove = getGridElement(gr, gc);
+    if (groove) {
+      const wall = document.createElement("div");
+      wall.className = "wall-placed wall-h";
+      groove.appendChild(wall);
+    }
+  } else {
+    // Vertical wall
+    const gr = wr * 2;
+    const gc = wc * 2 + 1;
+    const groove = getGridElement(gr, gc);
+    if (groove) {
+      const wall = document.createElement("div");
+      wall.className = "wall-placed wall-v";
+      groove.appendChild(wall);
+    }
+  }
+}
+
+function getCell(r, c) {
+  return document.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+}
+
+function getGridElement(gr, gc) {
+  const board = document.getElementById("board");
+  return board.children[gr * 17 + gc];
+}
+
+function updateWallsDisplay() {
+  const container = document.getElementById("walls-display");
+  container.innerHTML = "";
+
+  for (let p = 0; p < 2; p++) {
+    const row = document.createElement("div");
+    row.className = "walls-row";
+
+    const icon = document.createElement("div");
+    icon.className = "pawn-icon";
+    icon.style.background = p === 0
+      ? "radial-gradient(circle, #FFF8EC, #F0DDB8)"
+      : "radial-gradient(circle, #7A5535, #5C3A1E)";
+    icon.style.border = `1px solid ${p === 0 ? "#CEBB8E" : "#3D2510"}`;
+    row.appendChild(icon);
+
+    const pips = document.createElement("div");
+    pips.className = "wall-pips";
+    const total = 10;
+    const remaining = state ? state.walls_remaining[p] : total;
+    for (let i = 0; i < total; i++) {
+      const pip = document.createElement("div");
+      pip.className = `wall-pip ${i >= remaining ? "used" : ""}`;
+      pips.appendChild(pip);
+    }
+    row.appendChild(pips);
+    container.appendChild(row);
+  }
+}
+
+function updateGameInfo() {
+  const el = document.getElementById("game-info");
+  if (!state) { el.textContent = ""; return; }
+  const you = state.ai_player === 1 ? "light" : "dark";
+  el.innerHTML = `you: ${you} pawn<br>moves: ${state.num_moves}`;
+}
+
+// ── Interaction ──
+
+function onCellClick(r, c) {
+  if (!state || thinking || state.winner !== null) return;
+  if (state.current_player === state.ai_player) return;
+  if (mode !== "move") return;
+
+  // Check if this is a legal move
+  const isLegal = legalMoves.some(m => m[0] === r && m[1] === c);
+  if (!isLegal) return;
+
+  sendMove("move", [r, c]);
+}
+
+function onWallClick(wr, wc, orient) {
+  if (!state || thinking || state.winner !== null) return;
+  if (state.current_player === state.ai_player) return;
+  if (mode === "move") return;
+
+  sendMove("wall", [wr, wc, orient]);
+}
+
+async function sendMove(action, data) {
+  thinking = true;
+  render();
+
+  try {
+    const res = await fetch("/api/move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, data }),
+    });
+    const json = await res.json();
+
+    if (json.error) {
+      document.getElementById("status").textContent = json.error;
+      thinking = false;
+      render();
+      return;
+    }
+
+    state = json;
+    thinking = false;
+
+    // Fetch new legal moves
+    await fetchLegal();
+    render();
+  } catch (e) {
+    document.getElementById("status").textContent = "Error: " + e.message;
+    thinking = false;
+  }
+}
+
+async function fetchLegal() {
+  try {
+    const res = await fetch("/api/legal");
+    const json = await res.json();
+    legalMoves = json.pawn_moves || [];
+  } catch (e) {
+    legalMoves = [];
+  }
+}
+
+async function newGame(aiPlayer) {
+  lastAiPlayer = aiPlayer;
+  closeBanner();
+  thinking = true;
+  render();
+
+  try {
+    const res = await fetch("/api/new", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ai_player: aiPlayer }),
+    });
+    state = await res.json();
+    thinking = false;
+    mode = "move";
+    updateModeToggle();
+    await fetchLegal();
+    render();
+  } catch (e) {
+    document.getElementById("status").textContent = "Error connecting to server";
+    thinking = false;
+  }
+}
+
+// ── Mode toggle ──
+
+document.querySelectorAll(".mode-toggle span").forEach(span => {
+  span.addEventListener("click", () => {
+    mode = span.dataset.mode;
+    updateModeToggle();
+    render();
+  });
+});
+
+function updateModeToggle() {
+  document.querySelectorAll(".mode-toggle span").forEach(s => {
+    s.classList.toggle("active", s.dataset.mode === mode);
+  });
+}
+
+// ── Winner banner ──
+
+function showWinner(humanWon) {
+  const banner = document.getElementById("winner-banner");
+  document.getElementById("winner-text").textContent = humanWon ? "you win!" : "AI wins";
+  document.getElementById("winner-sub").textContent =
+    `${state.num_moves} moves`;
+  banner.classList.add("show");
+}
+
+function closeBanner() {
+  document.getElementById("winner-banner").classList.remove("show");
+}
+
+// ── Keyboard shortcuts ──
+document.addEventListener("keydown", (e) => {
+  if (e.key === "1") { mode = "move"; updateModeToggle(); render(); }
+  if (e.key === "2") { mode = "wall-h"; updateModeToggle(); render(); }
+  if (e.key === "3") { mode = "wall-v"; updateModeToggle(); render(); }
+});
+
+// ── Init ──
+buildBoard();
+updateWallsDisplay();
+</script>
+</body>
+</html>
