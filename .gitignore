@@ -1,0 +1,30 @@
+# Virtual environment (this is where torch etc live — 2GB+, never commit)
+venv/
+
+# Cython build artifacts
+build/
+*.so
+*.c
+*.egg-info/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Training outputs (large, regenerable)
+checkpoints/
+logs/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+progression.png
+gitignore
+.gitattributes
+LICENSE

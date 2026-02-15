@@ -2,6 +2,12 @@
 
 AlphaZero-style Quoridor AI with 2-player and 4-player support.
 
+## Training progress
+
+Games played across 57 training iterations — the AI learns to build and navigate walls over time:
+
+![Training panel](training_panel.png)
+
 ## Setup (macOS Apple Silicon)
 
 ```bash
@@ -12,6 +18,10 @@ source venv/bin/activate
 # Install PyTorch (CPU + MPS acceleration on Apple Silicon)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install numpy
+
+# (Optional) Build the fast Cython engine — ~50× faster game simulation
+pip install cython
+python setup.py build_ext --inplace
 ```
 
 ## Quick start
