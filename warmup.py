@@ -172,7 +172,7 @@ class ExpertAgent:
 
     def choose_move(self, game: QuoridorGame) -> tuple:
         player = game.current_player
-        opponent = 1 - player
+        opponent = (player + 1) % game.num_players  # works for 2 and 4 player
 
         my_dist = game.shortest_path_length(player)
         opp_dist = game.shortest_path_length(opponent)
@@ -260,14 +260,14 @@ class ExpertAgent:
 
 def _play_one_expert_game(args):
     """Worker function for parallel expert game generation."""
-    game_idx, num_games, mcts_rollouts, use_mcts = args
+    game_idx, num_games, mcts_rollouts, use_mcts, num_players = args
 
     if use_mcts:
         agent = MCTSExpert(num_rollouts=mcts_rollouts)
     else:
         agent = ExpertAgent()
 
-    game = QuoridorGame(2)
+    game = QuoridorGame(num_players)
     trajectory = []
     move_count = 0
 
@@ -320,6 +320,7 @@ def generate_expert_games(num_games: int = 1000,
                           mcts_rollouts: int = 500,
                           mcts_fraction: float = 0.7,
                           num_workers: int = 4,
+                          num_players: int = 2,
                           verbose: bool = True) -> list:
     """
     Play games between expert agents in parallel.
@@ -332,7 +333,7 @@ def generate_expert_games(num_games: int = 1000,
     args_list = []
     for i in range(num_games):
         use_mcts = random.random() < mcts_fraction
-        args_list.append((i, num_games, mcts_rollouts, use_mcts))
+        args_list.append((i, num_games, mcts_rollouts, use_mcts, num_players))
 
     n_mcts = sum(1 for a in args_list if a[3])
     n_heur = num_games - n_mcts
@@ -508,26 +509,29 @@ if __name__ == "__main__":
     parser.add_argument("--generate-only", action="store_true",
                         help="Only generate data, don't train")
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--players", type=int, default=2, choices=[2, 4],
+                        help="Number of players (2 or 4)")
     args = parser.parse_args()
 
     # Fast mode: all heuristic, no slow MCTS rollouts
     mcts_frac = 0.0 if args.fast else 0.7
 
     print("=" * 60)
-    print("  Phase 1: Generating expert games")
+    print(f"  Phase 1: Generating expert games ({args.players}-player)")
     print("=" * 60)
     samples = generate_expert_games(
         num_games=args.games,
         mcts_rollouts=args.rollouts,
         mcts_fraction=mcts_frac,
         num_workers=args.workers,
+        num_players=args.players,
     )
 
     if not args.generate_only:
         print("\n" + "=" * 60)
         print("  Phase 2: Pre-training network")
         print("=" * 60)
-        cfg = Config()
+        cfg = Config(num_players=args.players)
         device = args.device if args.device != "auto" else cfg.resolve_device()
         network = pretrain(samples, config=cfg, num_epochs=args.epochs,
                           device=device)
@@ -539,6 +543,6 @@ if __name__ == "__main__":
 
         print("\n" + "=" * 60)
         print("  Done! Next step:")
-        print("  caffeinate -i python train.py --resume --iterations 30 "
-              "--games 30 --simulations 100 --workers 4")
+        print("  caffeinate -i python train_final.py --iterations 30 "
+              f"--games 25 --simulations 150 --players {args.players}")
         print("=" * 60)
