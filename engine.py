@@ -56,8 +56,9 @@ class QuoridorGame:
             "walls_per_player": 10,
         },
         4: {
-            "starts": [(8, 4), (0, 4), (4, 0), (4, 8)],
-            "goals": [{"row": 0}, {"row": 8}, {"col": 8}, {"col": 0}],
+            # Clockwise order: bottom, right, top, left
+            "starts": [(8, 4), (4, 8), (0, 4), (4, 0)],
+            "goals": [{"row": 0}, {"col": 0}, {"row": 8}, {"col": 8}],
             "walls_per_player": 5,
         },
     }
