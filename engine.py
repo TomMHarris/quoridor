@@ -611,6 +611,19 @@ class MoveEncoder:
 
 
 # ===========================================================================
+# Auto-use Cython engine when available (102x faster, identical API)
+# ===========================================================================
+
+_PythonQuoridorGame = QuoridorGame  # keep reference to Python version
+
+try:
+    from engine_fast import FastQuoridorGame as QuoridorGame  # noqa: F811
+    _USING_FAST_ENGINE = True
+except ImportError:
+    _USING_FAST_ENGINE = False
+
+
+# ===========================================================================
 # Quick smoke test
 # ===========================================================================
 

@@ -1,0 +1,16 @@
+{
+  "builds": [
+    {
+      "src": "api/game.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/game.py" },
+    { "src": "/(.*)", "dest": "/public/$1" }
+  ]
+}

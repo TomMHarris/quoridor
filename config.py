@@ -25,9 +25,9 @@ class Config:
 
     # Expert pre-training (Phase 1)
     warmup_games: int = 2000
-    warmup_mcts_rollouts: int = 300
-    warmup_mcts_fraction: float = 0.6   # fraction of games using MCTSExpert
-    warmup_epochs: int = 15
+    warmup_mcts_rollouts: int = 200
+    warmup_mcts_fraction: float = 0.8   # fraction of games using MCTSExpert
+    warmup_epochs: int = 25
     warmup_lr: float = 1e-3
     warmup_batch_size: int = 128
 
@@ -51,7 +51,7 @@ class Config:
     eval_threshold: float = 0.55
 
     # System
-    num_workers: int = 4
+    num_workers: int = 8
     checkpoint_dir: str = "checkpoints"
     log_dir: str = "logs"
     save_every: int = 5

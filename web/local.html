@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>quoridor</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FAF8F4;
+    --board-bg: #F0EBE0;
+    --board-border: #D4CFC4;
+    --groove: #DDD8CD;
+    --groove-hover: #C4A56E55;
+    --wall: #C4A56E;
+    --wall-edge: #A8894F;
+    --pawn-light: #F0DDB8;
+    --pawn-light-edge: #CEBB8E;
+    --pawn-dark: #5C3A1E;
+    --pawn-dark-edge: #3D2510;
+    --highlight: #C4A56E44;
+    --highlight-strong: #C4A56E88;
+    --text: #2C2C2C;
+    --text-light: #9C9688;
+    --text-mid: #6B665C;
+    --accent: #C03020;
+    --cell-size: min(52px, calc((100vw - 40px) / 10.5));
+    --groove-w: max(10px, calc(var(--cell-size) * 0.2));
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  body {
+    background: var(--bg);
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    height: 100dvh;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) 0;
+  }
+
+  /* ── Top bar ── */
+  .top-bar {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 12px 16px 8px;
+    flex-shrink: 0;
+  }
+
+  .player-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0.45;
+    transition: opacity 0.3s;
+  }
+
+  .player-indicator.active { opacity: 1; }
+
+  .player-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 1px 1px 3px #00000015;
+  }
+
+  .player-dot.light {
+    background: radial-gradient(circle at 40% 35%, #FFF8EC, var(--pawn-light));
+    border: 1px solid var(--pawn-light-edge);
+  }
+
+  .player-dot.dark {
+    background: radial-gradient(circle at 40% 35%, #7A5535, var(--pawn-dark));
+    border: 1px solid var(--pawn-dark-edge);
+  }
+
+  .wall-pips {
+    display: flex;
+    gap: 2px;
+  }
+
+  .wall-pip {
+    width: 11px;
+    height: 4px;
+    background: var(--wall);
+    border-radius: 1.5px;
+    border: 0.5px solid var(--wall-edge);
+    transition: opacity 0.3s;
+  }
+
+  .wall-pip.used { opacity: 0.15; }
+
+  .turn-label {
+    font-size: 1rem;
+    font-weight: 400;
+    font-style: italic;
+    color: var(--text-mid);
+    min-width: 24px;
+    text-align: center;
+  }
+
+  /* ── Board area ── */
+  .board-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .board-wrapper {
+    background: var(--board-bg);
+    border: 1px solid var(--board-border);
+    border-radius: 6px;
+    padding: 8px;
+    box-shadow: 0 2px 20px #00000008, 0 1px 4px #00000010;
+    transition: transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
+  }
+
+  .board-wrapper.rotated { transform: rotate(180deg); }
+
+  .board {
+    display: grid;
+    grid-template-columns: repeat(9, var(--cell-size));
+    grid-template-rows: repeat(9, var(--cell-size));
+    column-gap: var(--groove-w);
+    row-gap: var(--groove-w);
+    position: relative;
+    background: var(--groove);
+    border-radius: 3px;
+    padding: 0;
+  }
+
+  /* Cells */
+  .cell {
+    width: var(--cell-size);
+    height: var(--cell-size);
+    background: var(--board-bg);
+    position: relative;
+    cursor: default;
+    transition: background 0.15s;
+    border-radius: 2px;
+    z-index: 2;
+  }
+
+  .cell.legal-move {
+    cursor: pointer;
+    background: var(--highlight);
+  }
+
+  .cell.legal-move:active {
+    background: var(--highlight-strong);
+  }
+
+  /* Pawns */
+  .pawn {
+    position: absolute;
+    width: 72%;
+    height: 72%;
+    top: 14%;
+    left: 14%;
+    border-radius: 50%;
+    z-index: 20;
+    transition: all 0.25s ease;
+    box-shadow: 2px 2px 6px #00000020;
+  }
+
+  .pawn-light {
+    background: radial-gradient(circle at 40% 35%,
+      #FFF8EC 0%, var(--pawn-light) 60%, var(--pawn-light-edge) 100%);
+    border: 1.5px solid var(--pawn-light-edge);
+  }
+
+  .pawn-dark {
+    background: radial-gradient(circle at 40% 35%,
+      #7A5535 0%, var(--pawn-dark) 60%, var(--pawn-dark-edge) 100%);
+    border: 1.5px solid var(--pawn-dark-edge);
+  }
+
+  /* ── Groove click zones ──
+     Invisible overlay areas positioned over the CSS gaps between cells.
+     They detect clicks on the grooves for wall placement. */
+  .groove-zone {
+    position: absolute;
+    z-index: 3;
+    cursor: pointer;
+    border-radius: 2px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .groove-zone:hover, .groove-zone:active {
+    background: var(--groove-hover);
+  }
+
+  /* Placed walls */
+  .wall-placed, .wall-ghost {
+    position: absolute;
+    background: var(--wall);
+    border: 1px solid var(--wall-edge);
+    border-radius: 3px;
+    z-index: 10;
+    box-shadow: 1px 1px 3px #00000015;
+    pointer-events: none;
+  }
+
+  .wall-ghost {
+    z-index: 9;
+    opacity: 0.45;
+    animation: ghost-pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes ghost-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 0.65; }
+  }
+
+  /* ── Action bar ── */
+  .action-bar {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    flex-shrink: 0;
+    background: var(--bg);
+    border-top: 1px solid var(--board-border);
+  }
+
+  .action-btn {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    padding: 10px 16px;
+    min-height: 44px;
+    background: var(--board-bg);
+    border: 1.5px solid var(--board-border);
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-mid);
+    transition: all 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .action-btn:active { background: var(--groove); }
+
+  .action-btn:disabled {
+    opacity: 0.3;
+    pointer-events: none;
+  }
+
+  .action-btn.confirm-btn {
+    background: var(--wall);
+    color: white;
+    border-color: var(--wall-edge);
+  }
+
+  .action-btn.cancel-btn {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* ── Turn overlay ── */
+  .turn-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s;
+  }
+
+  .turn-overlay.show {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .turn-overlay .player-dot {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 16px;
+  }
+
+  .turn-overlay h2 {
+    font-size: 1.8rem;
+    font-weight: 300;
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+
+  .turn-overlay p {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--text-light);
+  }
+
+  /* ── Winner overlay ── */
+  .winner-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(250, 248, 244, 0.95);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 300;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s;
+  }
+
+  .winner-overlay.show {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .winner-overlay .player-dot {
+    width: 56px;
+    height: 56px;
+    margin-bottom: 20px;
+  }
+
+  .winner-overlay h2 {
+    font-size: 2.2rem;
+    font-weight: 300;
+    letter-spacing: 0.1em;
+    margin-bottom: 6px;
+  }
+
+  .winner-overlay p {
+    font-style: italic;
+    color: var(--text-mid);
+    margin-bottom: 28px;
+  }
+
+  .winner-overlay button {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 1rem;
+    padding: 12px 32px;
+    background: var(--board-bg);
+    border: 1px solid var(--board-border);
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .winner-overlay button:active { background: var(--groove); }
+
+  /* ── Error flash ── */
+  .error-flash {
+    position: fixed;
+    top: 40%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #C0302018;
+    border: 1px solid #C0302040;
+    color: var(--accent);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    padding: 10px 20px;
+    border-radius: 8px;
+    z-index: 150;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  .error-flash.show { opacity: 1; }
+
+  /* ── iPad / larger screens ── */
+  @media (min-width: 768px) {
+    :root {
+      --cell-size: min(64px, calc((100vw - 64px) / 10));
+    }
+    .action-btn { font-size: 0.8rem; padding: 12px 20px; min-height: 48px; }
+    .player-indicator { gap: 8px; }
+    .turn-label { font-size: 1.15rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="top-bar">
+  <div class="player-indicator" id="p0-indicator">
+    <div class="player-dot light"></div>
+    <div class="wall-pips" id="p0-pips"></div>
+  </div>
+  <div class="turn-label" id="turn-label"></div>
+  <div class="player-indicator" id="p1-indicator">
+    <div class="wall-pips" id="p1-pips"></div>
+    <div class="player-dot dark"></div>
+  </div>
+</div>
+
+<!-- Board -->
+<div class="board-area">
+  <div class="board-wrapper" id="board-wrapper">
+    <div class="board" id="board"></div>
+  </div>
+</div>
+
+<!-- Action bar -->
+<div class="action-bar" id="action-bar">
+  <button class="action-btn confirm-btn" id="btn-confirm" style="display:none">place wall</button>
+  <button class="action-btn cancel-btn" id="btn-cancel" style="display:none">cancel</button>
+  <button class="action-btn" id="btn-undo">undo</button>
+  <button class="action-btn" id="btn-new">new game</button>
+</div>
+
+<!-- Turn transition overlay -->
+<div class="turn-overlay" id="turn-overlay">
+  <div class="player-dot" id="overlay-dot"></div>
+  <h2 id="overlay-title"></h2>
+  <p>tap to continue</p>
+</div>
+
+<!-- Winner overlay -->
+<div class="winner-overlay" id="winner-overlay">
+  <div class="player-dot" id="winner-dot"></div>
+  <h2 id="winner-title"></h2>
+  <p id="winner-sub"></p>
+  <button id="btn-play-again">play again</button>
+</div>
+
+<!-- Error flash -->
+<div class="error-flash" id="error-flash"></div>
+
+<script>
+const BOARD = 9;
+const TOTAL_WALLS = 10;
+
+let state = null;
+let legalMoves = [];
+let wallGhost = null;     // {wr, wc, orient} or null
+let isRotated = false;
+let transitioning = false;
+
+// ── Board building ──
+
+function buildBoard() {
+  const board = document.getElementById("board");
+  board.innerHTML = "";
+
+  // Create 9x9 cell grid
+  for (let r = 0; r < BOARD; r++) {
+    for (let c = 0; c < BOARD; c++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      cell.addEventListener("click", () => onCellClick(r, c));
+      board.appendChild(cell);
+    }
+  }
+}
+
+// Create invisible groove zones positioned over CSS gaps for wall clicks.
+// Must be called after board is in the DOM and has layout.
+function buildGrooveZones() {
+  // Remove old zones
+  document.querySelectorAll(".groove-zone").forEach(e => e.remove());
+
+  const board = document.getElementById("board");
+  const cells = board.querySelectorAll(".cell");
+  if (!cells.length) return;
+
+  const cellW = cells[0].offsetWidth;
+  const cellH = cells[0].offsetHeight;
+  const boardW = board.offsetWidth;
+  const boardH = board.offsetHeight;
+  const gapX = BOARD > 1 ? (boardW - BOARD * cellW) / (BOARD - 1) : 0;
+  const gapY = BOARD > 1 ? (boardH - BOARD * cellH) / (BOARD - 1) : 0;
+
+  // Horizontal groove zones — trimmed to avoid cross-point overlaps
+  // Each H zone covers the horizontal groove between two cells, but stops
+  // short of the vertical groove columns on either side.
+  for (let wr = 0; wr < 8; wr++) {
+    for (let wc = 0; wc < 8; wc++) {
+      const zone = document.createElement("div");
+      zone.className = "groove-zone";
+      const x = wc * (cellW + gapX);
+      const y = (wr + 1) * cellH + wr * gapY;
+      // Inset by gapX/2 on each side to avoid cross-points
+      zone.style.left = (x + gapX / 2) + "px";
+      zone.style.top = y + "px";
+      zone.style.width = (cellW * 2) + "px";
+      zone.style.height = gapY + "px";
+      zone.dataset.wr = wr;
+      zone.dataset.wc = wc;
+      zone.dataset.wo = "H";
+      zone.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onGrooveClick(wr, wc, "H");
+      });
+      board.appendChild(zone);
+    }
+  }
+
+  // Vertical groove zones — trimmed to avoid cross-point overlaps
+  for (let wr = 0; wr < 8; wr++) {
+    for (let wc = 0; wc < 8; wc++) {
+      const zone = document.createElement("div");
+      zone.className = "groove-zone";
+      const x = (wc + 1) * cellW + wc * gapX;
+      const y = wr * (cellH + gapY);
+      // Inset by gapY/2 on each side to avoid cross-points
+      zone.style.left = x + "px";
+      zone.style.top = (y + gapY / 2) + "px";
+      zone.style.width = gapX + "px";
+      zone.style.height = (cellH * 2) + "px";
+      zone.dataset.wr = wr;
+      zone.dataset.wc = wc;
+      zone.dataset.wo = "V";
+      zone.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onGrooveClick(wr, wc, "V");
+      });
+      board.appendChild(zone);
+    }
+  }
+
+  // Cross-point zones — detect H vs V based on click position
+  for (let wr = 0; wr < 8; wr++) {
+    for (let wc = 0; wc < 8; wc++) {
+      // Cross-point at intersection of groove below row wr+1 and groove right of col wc+1
+      // But cross-points exist between adjacent groove intersections.
+      // Top-left cross: between H-groove (wr) and V-groove (wc)
+      const cx = (wc + 1) * cellW + wc * gapX;
+      const cy = (wr + 1) * cellH + wr * gapY;
+      const cross = document.createElement("div");
+      cross.className = "groove-zone";
+      cross.style.left = cx + "px";
+      cross.style.top = cy + "px";
+      cross.style.width = gapX + "px";
+      cross.style.height = gapY + "px";
+      cross.addEventListener("click", (e) => {
+        e.stopPropagation();
+        // Determine H or V based on click position within the cross-point
+        const rect = cross.getBoundingClientRect();
+        const relX = e.clientX - rect.left;
+        const relY = e.clientY - rect.top;
+        const ratio = rect.width > 0 && rect.height > 0
+          ? (relX / rect.width) / (relY / rect.height)
+          : 1;
+        // If wider click (towards horizontal center), place H wall; otherwise V
+        if (relY / rect.height < 0.5 || relY / rect.height > 0.5) {
+          // Use aspect: horizontal if click is more left-right centered
+          const fromCenterX = Math.abs(relX / rect.width - 0.5);
+          const fromCenterY = Math.abs(relY / rect.height - 0.5);
+          if (fromCenterY <= fromCenterX) {
+            // Click is more towards top/bottom edges → horizontal wall
+            onGrooveClick(wr, wc, "H");
+          } else {
+            // Click is more towards left/right edges → vertical wall
+            onGrooveClick(wr, wc, "V");
+          }
+        }
+      });
+      board.appendChild(cross);
+    }
+  }
+}
+
+// ── Rendering ──
+
+function render() {
+  if (!state) return;
+
+  // Clear previous dynamic elements
+  document.querySelectorAll(".pawn, .wall-placed, .wall-ghost").forEach(e => e.remove());
+  document.querySelectorAll(".cell").forEach(e => e.classList.remove("legal-move"));
+
+  const board = document.getElementById("board");
+  const cells = board.querySelectorAll(".cell");
+  if (!cells.length) return;
+
+  const cellW = cells[0].offsetWidth;
+  const cellH = cells[0].offsetHeight;
+  const boardW = board.offsetWidth;
+  const gapX = BOARD > 1 ? (boardW - BOARD * cellW) / (BOARD - 1) : 0;
+  const gapY = gapX; // square grid
+
+  // Place pawns
+  for (let p = 0; p < 2; p++) {
+    const [pr, pc] = state.pawns[p];
+    const cell = getCell(pr, pc);
+    if (cell) {
+      const el = document.createElement("div");
+      el.className = `pawn ${p === 0 ? "pawn-light" : "pawn-dark"}`;
+      cell.appendChild(el);
+    }
+  }
+
+  // Place walls
+  for (const [wr, wc, orient] of state.walls) {
+    renderWall(board, wr, wc, orient, "wall-placed", cellW, cellH, gapX, gapY);
+  }
+
+  // Wall ghost
+  if (wallGhost) {
+    renderWall(board, wallGhost.wr, wallGhost.wc, wallGhost.orient, "wall-ghost", cellW, cellH, gapX, gapY);
+  }
+
+  // Highlight legal pawn moves (only when no ghost is active)
+  if (!wallGhost && !transitioning && state.winner === null) {
+    for (const m of legalMoves) {
+      const cell = getCell(m[0], m[1]);
+      if (cell) cell.classList.add("legal-move");
+    }
+  }
+
+  // Wall pips
+  updateWallPips();
+
+  // Turn indicator
+  const turnLabel = document.getElementById("turn-label");
+  turnLabel.textContent = state.winner !== null ? "" : (state.current_player === 0 ? "\u25C0" : "\u25B6");
+
+  document.getElementById("p0-indicator").classList.toggle("active", state.current_player === 0);
+  document.getElementById("p1-indicator").classList.toggle("active", state.current_player === 1);
+
+  // Action bar
+  updateActionBar();
+}
+
+function renderWall(board, wr, wc, orient, className, cellW, cellH, gapX, gapY) {
+  const el = document.createElement("div");
+  el.className = className;
+  const wallThickness = 10;
+
+  if (orient === "H") {
+    el.style.left = (wc * (cellW + gapX)) + "px";
+    el.style.top = ((wr + 1) * cellH + wr * gapY + (gapY - wallThickness) / 2) + "px";
+    el.style.width = (cellW * 2 + gapX) + "px";
+    el.style.height = wallThickness + "px";
+  } else {
+    el.style.left = ((wc + 1) * cellW + wc * gapX + (gapX - wallThickness) / 2) + "px";
+    el.style.top = (wr * (cellH + gapY)) + "px";
+    el.style.width = wallThickness + "px";
+    el.style.height = (cellH * 2 + gapY) + "px";
+  }
+
+  board.appendChild(el);
+}
+
+function getCell(r, c) {
+  return document.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+}
+
+function updateWallPips() {
+  for (let p = 0; p < 2; p++) {
+    const container = document.getElementById(`p${p}-pips`);
+    container.innerHTML = "";
+    const remaining = state ? state.walls_remaining[p] : TOTAL_WALLS;
+    for (let i = 0; i < TOTAL_WALLS; i++) {
+      const pip = document.createElement("div");
+      pip.className = `wall-pip ${i >= remaining ? "used" : ""}`;
+      container.appendChild(pip);
+    }
+  }
+}
+
+function updateActionBar() {
+  const hasGhost = wallGhost !== null;
+
+  document.getElementById("btn-confirm").style.display = hasGhost ? "" : "none";
+  document.getElementById("btn-cancel").style.display = hasGhost ? "" : "none";
+  document.getElementById("btn-undo").style.display = hasGhost ? "none" : "";
+  document.getElementById("btn-new").style.display = hasGhost ? "none" : "";
+  document.getElementById("btn-undo").disabled = !state || state.move_count === 0;
+}
+
+// ── Interaction ──
+
+function onCellClick(r, c) {
+  if (!state || transitioning || state.winner !== null) return;
+
+  // If there's a wall ghost, clicking a cell cancels it
+  if (wallGhost) {
+    wallGhost = null;
+    render();
+    return;
+  }
+
+  // Otherwise, try to move
+  const isLegal = legalMoves.some(m => m[0] === r && m[1] === c);
+  if (!isLegal) return;
+  sendMove({ type: "move", to: [r, c] });
+}
+
+function onGrooveClick(wr, wc, orient) {
+  if (!state || transitioning || state.winner !== null) return;
+  if (state.walls_remaining[state.current_player] <= 0) {
+    showError("no walls left");
+    return;
+  }
+
+  // If clicking same ghost, confirm it
+  if (wallGhost && wallGhost.wr === wr && wallGhost.wc === wc && wallGhost.orient === orient) {
+    confirmWall();
+    return;
+  }
+
+  // Show ghost preview
+  wallGhost = { wr, wc, orient };
+  render();
+}
+
+function confirmWall() {
+  if (!wallGhost) return;
+  sendMove({ type: "wall", pos: [wallGhost.wr, wallGhost.wc], orient: wallGhost.orient });
+}
+
+function cancelGhost() {
+  wallGhost = null;
+  render();
+}
+
+// ── API ──
+
+async function sendMove(moveData) {
+  if (transitioning) return;
+
+  try {
+    const res = await fetch("/api/move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(moveData),
+    });
+    const json = await res.json();
+
+    if (json.error) {
+      showError(json.error);
+      // Clear ghost on wall errors
+      if (moveData.type === "wall") {
+        wallGhost = null;
+        render();
+      }
+      return;
+    }
+
+    const prevPlayer = state ? state.current_player : 0;
+    state = json.state;
+    wallGhost = null;
+
+    await fetchLegal();
+
+    if (state.winner !== null) {
+      render();
+      setTimeout(() => showWinner(), 400);
+      return;
+    }
+
+    if (state.current_player !== prevPlayer) {
+      showTurnOverlay(state.current_player);
+    } else {
+      render();
+    }
+  } catch (e) {
+    showError("connection error");
+  }
+}
+
+async function fetchLegal() {
+  try {
+    const res = await fetch("/api/legal");
+    const json = await res.json();
+    legalMoves = json.pawn_moves || [];
+  } catch (e) {
+    legalMoves = [];
+  }
+}
+
+// ── Turn transition ──
+
+function showTurnOverlay(player) {
+  transitioning = true;
+  const overlay = document.getElementById("turn-overlay");
+  const dot = document.getElementById("overlay-dot");
+  const title = document.getElementById("overlay-title");
+
+  dot.className = `player-dot ${player === 0 ? "light" : "dark"}`;
+  title.textContent = player === 0 ? "light's turn" : "dark's turn";
+
+  overlay.classList.add("show");
+
+  // Rotate board underneath
+  setTimeout(() => {
+    isRotated = player === 1;
+    document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
+    render();
+  }, 200);
+
+  let canDismiss = false;
+  setTimeout(() => { canDismiss = true; }, 600);
+
+  const dismiss = () => {
+    if (!canDismiss) return;
+    overlay.classList.remove("show");
+    transitioning = false;
+    overlay.removeEventListener("click", dismiss);
+    render();
+  };
+
+  overlay.addEventListener("click", dismiss);
+
+  // Auto-dismiss
+  setTimeout(() => {
+    if (transitioning) {
+      overlay.classList.remove("show");
+      transitioning = false;
+      overlay.removeEventListener("click", dismiss);
+      render();
+    }
+  }, 3000);
+}
+
+// ── Winner ──
+
+function showWinner() {
+  const overlay = document.getElementById("winner-overlay");
+  document.getElementById("winner-dot").className = `player-dot ${state.winner === 0 ? "light" : "dark"}`;
+  document.getElementById("winner-title").textContent = state.winner === 0 ? "light wins" : "dark wins";
+  document.getElementById("winner-sub").textContent = `${state.move_count} moves`;
+  overlay.classList.add("show");
+}
+
+// ── Error flash ──
+
+let errorTimeout = null;
+function showError(msg) {
+  const el = document.getElementById("error-flash");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(errorTimeout);
+  errorTimeout = setTimeout(() => el.classList.remove("show"), 2000);
+}
+
+// ── Undo ──
+
+async function undoMove() {
+  if (!state || state.move_count === 0 || transitioning) return;
+
+  try {
+    const res = await fetch("/api/undo", { method: "POST" });
+    const json = await res.json();
+    if (json.error) { showError(json.error); return; }
+
+    state = json.state;
+    wallGhost = null;
+    await fetchLegal();
+
+    isRotated = state.current_player === 1;
+    document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
+    render();
+  } catch (e) {
+    showError("connection error");
+  }
+}
+
+// ── New game ──
+
+async function newGame() {
+  document.getElementById("winner-overlay").classList.remove("show");
+  document.getElementById("turn-overlay").classList.remove("show");
+  transitioning = false;
+
+  try {
+    const res = await fetch("/api/new", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const json = await res.json();
+
+    state = json.state;
+    wallGhost = null;
+    isRotated = false;
+    legalMoves = [];
+
+    document.getElementById("board-wrapper").classList.remove("rotated");
+
+    await fetchLegal();
+    render();
+  } catch (e) {
+    showError("connection error");
+  }
+}
+
+// ── Button handlers ──
+
+document.getElementById("btn-confirm").addEventListener("click", confirmWall);
+document.getElementById("btn-cancel").addEventListener("click", cancelGhost);
+document.getElementById("btn-undo").addEventListener("click", undoMove);
+document.getElementById("btn-new").addEventListener("click", newGame);
+document.getElementById("btn-play-again").addEventListener("click", newGame);
+
+// ── Sizing ──
+
+function recalcSize() {
+  const topBar = document.querySelector(".top-bar");
+  const actionBar = document.querySelector(".action-bar");
+  const topH = topBar.offsetHeight;
+  const botH = actionBar.offsetHeight;
+  const pad = 20; // board-wrapper padding + margins
+  const availW = window.innerWidth - 28;
+  const availH = window.innerHeight - topH - botH - pad;
+
+  // Cell size limited by both width and height
+  // Board = 9 cells + 8 grooves. groove ~= cell * 0.2, so total ~= 9*cell + 8*0.2*cell = 10.6*cell
+  const cellFromW = availW / 10.6;
+  const cellFromH = availH / 10.6;
+  const cellSize = Math.floor(Math.min(cellFromW, cellFromH, 64));
+
+  document.documentElement.style.setProperty("--cell-size", cellSize + "px");
+  document.documentElement.style.setProperty("--groove-w", Math.max(8, Math.round(cellSize * 0.2)) + "px");
+}
+
+// ── Init ──
+
+recalcSize();
+buildBoard();
+updateWallPips();
+
+// Wait for layout then build groove zones and start game
+setTimeout(() => {
+  buildGrooveZones();
+  newGame();
+}, 50);
+
+window.addEventListener("resize", () => {
+  recalcSize();
+  buildGrooveZones();
+  if (state) render();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>quoridor</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FAF8F4;
+    --board-bg: #F0EBE0;
+    --board-border: #D4CFC4;
+    --groove: #DDD8CD;
+    --groove-hover: #C4A56E55;
+    --wall: #C4A56E;
+    --wall-edge: #A8894F;
+    --pawn-light: #F0DDB8;
+    --pawn-light-edge: #CEBB8E;
+    --pawn-dark: #5C3A1E;
+    --pawn-dark-edge: #3D2510;
+    --highlight: #C4A56E44;
+    --highlight-strong: #C4A56E88;
+    --text: #2C2C2C;
+    --text-light: #9C9688;
+    --text-mid: #6B665C;
+    --accent: #C03020;
+    --cell-size: 48px;
+    --groove-w: 10px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  body {
+    background: var(--bg);
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    height: 100dvh;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) 0;
+  }
+
+  .top-bar {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 12px 16px 8px;
+    flex-shrink: 0;
+  }
+
+  .player-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0.45;
+    transition: opacity 0.3s;
+  }
+
+  .player-indicator.active { opacity: 1; }
+
+  .player-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 1px 1px 3px #00000015;
+  }
+
+  .player-dot.light {
+    background: radial-gradient(circle at 40% 35%, #FFF8EC, var(--pawn-light));
+    border: 1px solid var(--pawn-light-edge);
+  }
+
+  .player-dot.dark {
+    background: radial-gradient(circle at 40% 35%, #7A5535, var(--pawn-dark));
+    border: 1px solid var(--pawn-dark-edge);
+  }
+
+  .wall-pips { display: flex; gap: 2px; }
+
+  .wall-pip {
+    width: 11px;
+    height: 4px;
+    background: var(--wall);
+    border-radius: 1.5px;
+    border: 0.5px solid var(--wall-edge);
+    transition: opacity 0.3s;
+  }
+
+  .wall-pip.used { opacity: 0.15; }
+
+  .turn-label {
+    font-size: 1rem;
+    font-weight: 400;
+    font-style: italic;
+    color: var(--text-mid);
+    min-width: 24px;
+    text-align: center;
+  }
+
+  .board-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .board-wrapper {
+    background: var(--board-bg);
+    border: 1px solid var(--board-border);
+    border-radius: 6px;
+    padding: 8px;
+    box-shadow: 0 2px 20px #00000008, 0 1px 4px #00000010;
+    transition: transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
+  }
+
+  .board-wrapper.rotated { transform: rotate(180deg); }
+
+  .board {
+    display: grid;
+    grid-template-columns: repeat(9, var(--cell-size));
+    grid-template-rows: repeat(9, var(--cell-size));
+    column-gap: var(--groove-w);
+    row-gap: var(--groove-w);
+    position: relative;
+    background: var(--groove);
+    border-radius: 3px;
+  }
+
+  .cell {
+    width: var(--cell-size);
+    height: var(--cell-size);
+    background: var(--board-bg);
+    position: relative;
+    cursor: default;
+    transition: background 0.15s;
+    border-radius: 2px;
+    z-index: 2;
+  }
+
+  .cell.legal-move { cursor: pointer; background: var(--highlight); }
+  .cell.legal-move:active { background: var(--highlight-strong); }
+
+  .pawn {
+    position: absolute;
+    width: 72%;
+    height: 72%;
+    top: 14%;
+    left: 14%;
+    border-radius: 50%;
+    z-index: 20;
+    transition: all 0.25s ease;
+    box-shadow: 2px 2px 6px #00000020;
+  }
+
+  .pawn-light {
+    background: radial-gradient(circle at 40% 35%, #FFF8EC 0%, var(--pawn-light) 60%, var(--pawn-light-edge) 100%);
+    border: 1.5px solid var(--pawn-light-edge);
+  }
+
+  .pawn-dark {
+    background: radial-gradient(circle at 40% 35%, #7A5535 0%, var(--pawn-dark) 60%, var(--pawn-dark-edge) 100%);
+    border: 1.5px solid var(--pawn-dark-edge);
+  }
+
+  .groove-zone {
+    position: absolute;
+    z-index: 3;
+    cursor: pointer;
+    border-radius: 2px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .groove-zone:hover, .groove-zone:active { background: var(--groove-hover); }
+
+  .wall-placed, .wall-ghost {
+    position: absolute;
+    background: var(--wall);
+    border: 1px solid var(--wall-edge);
+    border-radius: 3px;
+    z-index: 10;
+    box-shadow: 1px 1px 3px #00000015;
+    pointer-events: none;
+  }
+
+  .wall-ghost {
+    z-index: 9;
+    opacity: 0.45;
+    animation: ghost-pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes ghost-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 0.65; }
+  }
+
+  .action-bar {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    flex-shrink: 0;
+    background: var(--bg);
+    border-top: 1px solid var(--board-border);
+  }
+
+  .action-btn {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    padding: 10px 16px;
+    min-height: 44px;
+    background: var(--board-bg);
+    border: 1.5px solid var(--board-border);
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-mid);
+    transition: all 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .action-btn:active { background: var(--groove); }
+  .action-btn:disabled { opacity: 0.3; pointer-events: none; }
+  .action-btn.confirm-btn { background: var(--wall); color: white; border-color: var(--wall-edge); }
+  .action-btn.cancel-btn { color: var(--accent); border-color: var(--accent); }
+
+  .winner-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(250, 248, 244, 0.95);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 300;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s;
+  }
+
+  .winner-overlay.show { opacity: 1; pointer-events: all; }
+
+  .winner-overlay .player-dot { width: 56px; height: 56px; margin-bottom: 20px; }
+
+  .winner-overlay h2 {
+    font-size: 2.2rem;
+    font-weight: 300;
+    letter-spacing: 0.1em;
+    margin-bottom: 6px;
+  }
+
+  .winner-overlay p {
+    font-style: italic;
+    color: var(--text-mid);
+    margin-bottom: 28px;
+  }
+
+  .winner-overlay button {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 1rem;
+    padding: 12px 32px;
+    background: var(--board-bg);
+    border: 1px solid var(--board-border);
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .winner-overlay button:active { background: var(--groove); }
+
+  .error-flash {
+    position: fixed;
+    top: 40%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #C0302018;
+    border: 1px solid #C0302040;
+    color: var(--accent);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    padding: 10px 20px;
+    border-radius: 8px;
+    z-index: 150;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  .error-flash.show { opacity: 1; }
+
+  @media (min-width: 768px) {
+    .action-btn { font-size: 0.8rem; padding: 12px 20px; min-height: 48px; }
+    .player-indicator { gap: 8px; }
+    .turn-label { font-size: 1.15rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div class="player-indicator" id="p0-indicator">
+    <div class="player-dot light"></div>
+    <div class="wall-pips" id="p0-pips"></div>
+  </div>
+  <div class="turn-label" id="turn-label"></div>
+  <div class="player-indicator" id="p1-indicator">
+    <div class="wall-pips" id="p1-pips"></div>
+    <div class="player-dot dark"></div>
+  </div>
+</div>
+
+<div class="board-area">
+  <div class="board-wrapper" id="board-wrapper">
+    <div class="board" id="board"></div>
+  </div>
+</div>
+
+<div class="action-bar" id="action-bar">
+  <button class="action-btn confirm-btn" id="btn-confirm" style="display:none">place wall</button>
+  <button class="action-btn cancel-btn" id="btn-cancel" style="display:none">cancel</button>
+  <button class="action-btn" id="btn-undo">undo</button>
+  <button class="action-btn" id="btn-new">new game</button>
+</div>
+
+<div class="winner-overlay" id="winner-overlay">
+  <div class="player-dot" id="winner-dot"></div>
+  <h2 id="winner-title"></h2>
+  <p id="winner-sub"></p>
+  <button id="btn-play-again">play again</button>
+</div>
+
+<div class="error-flash" id="error-flash"></div>
+
+<script>
+const BOARD = 9;
+const TOTAL_WALLS = 10;
+
+let state = null;
+let history = [];       // Move history sent with each API call
+let legalMoves = [];
+let wallGhost = null;
+let isRotated = false;
+
+// ── API (stateless — sends history with each call) ──
+
+async function apiCall(action, extra = {}) {
+  try {
+    const res = await fetch("/api/game", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, history, ...extra }),
+    });
+    return await res.json();
+  } catch (e) {
+    return { error: "connection error" };
+  }
+}
+
+// ── Board building ──
+
+function buildBoard() {
+  const board = document.getElementById("board");
+  board.innerHTML = "";
+  for (let r = 0; r < BOARD; r++) {
+    for (let c = 0; c < BOARD; c++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      cell.addEventListener("click", () => onCellClick(r, c));
+      board.appendChild(cell);
+    }
+  }
+}
+
+function buildGrooveZones() {
+  document.querySelectorAll(".groove-zone").forEach(e => e.remove());
+
+  const board = document.getElementById("board");
+  const cells = board.querySelectorAll(".cell");
+  if (!cells.length) return;
+
+  const cellW = cells[0].offsetWidth;
+  const cellH = cells[0].offsetHeight;
+  const boardW = board.offsetWidth;
+  const boardH = board.offsetHeight;
+  const gapX = BOARD > 1 ? (boardW - BOARD * cellW) / (BOARD - 1) : 0;
+  const gapY = BOARD > 1 ? (boardH - BOARD * cellH) / (BOARD - 1) : 0;
+
+  // Horizontal zones (trimmed to avoid cross-points)
+  for (let wr = 0; wr < 8; wr++) {
+    for (let wc = 0; wc < 8; wc++) {
+      const zone = document.createElement("div");
+      zone.className = "groove-zone";
+      zone.style.left = (wc * (cellW + gapX) + gapX / 2) + "px";
+      zone.style.top = ((wr + 1) * cellH + wr * gapY) + "px";
+      zone.style.width = (cellW * 2) + "px";
+      zone.style.height = gapY + "px";
+      zone.addEventListener("click", (e) => { e.stopPropagation(); onGrooveClick(wr, wc, "H"); });
+      board.appendChild(zone);
+    }
+  }
+
+  // Vertical zones (trimmed to avoid cross-points)
+  for (let wr = 0; wr < 8; wr++) {
+    for (let wc = 0; wc < 8; wc++) {
+      const zone = document.createElement("div");
+      zone.className = "groove-zone";
+      zone.style.left = ((wc + 1) * cellW + wc * gapX) + "px";
+      zone.style.top = (wr * (cellH + gapY) + gapY / 2) + "px";
+      zone.style.width = gapX + "px";
+      zone.style.height = (cellH * 2) + "px";
+      zone.addEventListener("click", (e) => { e.stopPropagation(); onGrooveClick(wr, wc, "V"); });
+      board.appendChild(zone);
+    }
+  }
+
+  // Cross-point zones — detect H vs V based on click position
+  for (let wr = 0; wr < 8; wr++) {
+    for (let wc = 0; wc < 8; wc++) {
+      const cross = document.createElement("div");
+      cross.className = "groove-zone";
+      cross.style.left = ((wc + 1) * cellW + wc * gapX) + "px";
+      cross.style.top = ((wr + 1) * cellH + wr * gapY) + "px";
+      cross.style.width = gapX + "px";
+      cross.style.height = gapY + "px";
+      cross.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const rect = cross.getBoundingClientRect();
+        const fx = Math.abs((e.clientX - rect.left) / rect.width - 0.5);
+        const fy = Math.abs((e.clientY - rect.top) / rect.height - 0.5);
+        onGrooveClick(wr, wc, fy <= fx ? "H" : "V");
+      });
+      board.appendChild(cross);
+    }
+  }
+}
+
+// ── Rendering ──
+
+function render() {
+  if (!state) return;
+
+  document.querySelectorAll(".pawn, .wall-placed, .wall-ghost").forEach(e => e.remove());
+  document.querySelectorAll(".cell").forEach(e => e.classList.remove("legal-move"));
+
+  const board = document.getElementById("board");
+  const cells = board.querySelectorAll(".cell");
+  if (!cells.length) return;
+
+  const cellW = cells[0].offsetWidth;
+  const cellH = cells[0].offsetHeight;
+  const boardW = board.offsetWidth;
+  const gapX = BOARD > 1 ? (boardW - BOARD * cellW) / (BOARD - 1) : 0;
+  const gapY = gapX;
+
+  // Pawns
+  for (let p = 0; p < 2; p++) {
+    const [pr, pc] = state.pawns[p];
+    const cell = getCell(pr, pc);
+    if (cell) {
+      const el = document.createElement("div");
+      el.className = `pawn ${p === 0 ? "pawn-light" : "pawn-dark"}`;
+      cell.appendChild(el);
+    }
+  }
+
+  // Walls
+  for (const [wr, wc, orient] of state.walls) {
+    renderWall(board, wr, wc, orient, "wall-placed", cellW, cellH, gapX, gapY);
+  }
+
+  // Ghost
+  if (wallGhost) {
+    renderWall(board, wallGhost.wr, wallGhost.wc, wallGhost.orient, "wall-ghost", cellW, cellH, gapX, gapY);
+  }
+
+  // Legal moves (only when no ghost)
+  if (!wallGhost && state.winner === null) {
+    for (const m of legalMoves) {
+      const cell = getCell(m[0], m[1]);
+      if (cell) cell.classList.add("legal-move");
+    }
+  }
+
+  updateWallPips();
+
+  const turnLabel = document.getElementById("turn-label");
+  turnLabel.textContent = state.winner !== null ? "" : (state.current_player === 0 ? "\u25C0" : "\u25B6");
+  document.getElementById("p0-indicator").classList.toggle("active", state.current_player === 0);
+  document.getElementById("p1-indicator").classList.toggle("active", state.current_player === 1);
+
+  updateActionBar();
+}
+
+function renderWall(board, wr, wc, orient, className, cellW, cellH, gapX, gapY) {
+  const el = document.createElement("div");
+  el.className = className;
+  const t = 10;
+  if (orient === "H") {
+    el.style.left = (wc * (cellW + gapX)) + "px";
+    el.style.top = ((wr + 1) * cellH + wr * gapY + (gapY - t) / 2) + "px";
+    el.style.width = (cellW * 2 + gapX) + "px";
+    el.style.height = t + "px";
+  } else {
+    el.style.left = ((wc + 1) * cellW + wc * gapX + (gapX - t) / 2) + "px";
+    el.style.top = (wr * (cellH + gapY)) + "px";
+    el.style.width = t + "px";
+    el.style.height = (cellH * 2 + gapY) + "px";
+  }
+  board.appendChild(el);
+}
+
+function getCell(r, c) {
+  return document.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+}
+
+function updateWallPips() {
+  for (let p = 0; p < 2; p++) {
+    const container = document.getElementById(`p${p}-pips`);
+    container.innerHTML = "";
+    const remaining = state ? state.walls_remaining[p] : TOTAL_WALLS;
+    for (let i = 0; i < TOTAL_WALLS; i++) {
+      const pip = document.createElement("div");
+      pip.className = `wall-pip ${i >= remaining ? "used" : ""}`;
+      container.appendChild(pip);
+    }
+  }
+}
+
+function updateActionBar() {
+  const hasGhost = wallGhost !== null;
+  document.getElementById("btn-confirm").style.display = hasGhost ? "" : "none";
+  document.getElementById("btn-cancel").style.display = hasGhost ? "" : "none";
+  document.getElementById("btn-undo").style.display = hasGhost ? "none" : "";
+  document.getElementById("btn-new").style.display = hasGhost ? "none" : "";
+  document.getElementById("btn-undo").disabled = !state || state.move_count === 0;
+}
+
+// ── Interaction ──
+
+function onCellClick(r, c) {
+  if (!state || state.winner !== null) return;
+  if (wallGhost) { wallGhost = null; render(); return; }
+  if (!legalMoves.some(m => m[0] === r && m[1] === c)) return;
+  sendMove({ type: "move", to: [r, c] });
+}
+
+function onGrooveClick(wr, wc, orient) {
+  if (!state || state.winner !== null) return;
+  if (state.walls_remaining[state.current_player] <= 0) { showError("no walls left"); return; }
+  if (wallGhost && wallGhost.wr === wr && wallGhost.wc === wc && wallGhost.orient === orient) {
+    confirmWall();
+    return;
+  }
+  wallGhost = { wr, wc, orient };
+  render();
+}
+
+function confirmWall() {
+  if (!wallGhost) return;
+  sendMove({ type: "wall", pos: [wallGhost.wr, wallGhost.wc], orient: wallGhost.orient });
+}
+
+async function sendMove(moveData) {
+  const json = await apiCall("move", { move: moveData });
+  if (json.error) {
+    showError(json.error);
+    if (moveData.type === "wall") { wallGhost = null; render(); }
+    return;
+  }
+
+  const prevPlayer = state ? state.current_player : 0;
+  state = json.state;
+  history = json.history;
+  wallGhost = null;
+
+  // Fetch legal moves
+  const legalJson = await apiCall("legal");
+  legalMoves = legalJson.pawn_moves || [];
+
+  // Rotate board on turn change
+  if (state.current_player !== prevPlayer) {
+    isRotated = state.current_player === 1;
+    document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
+  }
+
+  render();
+
+  if (state.winner !== null) {
+    setTimeout(() => showWinner(), 400);
+  }
+}
+
+async function undoMove() {
+  if (!state || state.move_count === 0) return;
+  const json = await apiCall("undo");
+  if (json.error) { showError(json.error); return; }
+
+  state = json.state;
+  history = json.history;
+  wallGhost = null;
+
+  const legalJson = await apiCall("legal");
+  legalMoves = legalJson.pawn_moves || [];
+
+  isRotated = state.current_player === 1;
+  document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
+  render();
+}
+
+async function newGame() {
+  document.getElementById("winner-overlay").classList.remove("show");
+  const json = await apiCall("new");
+  if (json.error) { showError(json.error); return; }
+
+  state = json.state;
+  history = json.history;
+  wallGhost = null;
+  isRotated = false;
+  document.getElementById("board-wrapper").classList.remove("rotated");
+
+  const legalJson = await apiCall("legal");
+  legalMoves = legalJson.pawn_moves || [];
+  render();
+}
+
+function showWinner() {
+  document.getElementById("winner-dot").className = `player-dot ${state.winner === 0 ? "light" : "dark"}`;
+  document.getElementById("winner-title").textContent = state.winner === 0 ? "light wins" : "dark wins";
+  document.getElementById("winner-sub").textContent = `${state.move_count} moves`;
+  document.getElementById("winner-overlay").classList.add("show");
+}
+
+let errorTimeout = null;
+function showError(msg) {
+  const el = document.getElementById("error-flash");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(errorTimeout);
+  errorTimeout = setTimeout(() => el.classList.remove("show"), 2000);
+}
+
+// ── Button handlers ──
+
+document.getElementById("btn-confirm").addEventListener("click", confirmWall);
+document.getElementById("btn-cancel").addEventListener("click", () => { wallGhost = null; render(); });
+document.getElementById("btn-undo").addEventListener("click", undoMove);
+document.getElementById("btn-new").addEventListener("click", newGame);
+document.getElementById("btn-play-again").addEventListener("click", newGame);
+
+// ── Sizing ──
+
+function recalcSize() {
+  const topH = document.querySelector(".top-bar").offsetHeight;
+  const botH = document.querySelector(".action-bar").offsetHeight;
+  const availW = window.innerWidth - 28;
+  const availH = window.innerHeight - topH - botH - 20;
+  const cellSize = Math.floor(Math.min(availW / 10.6, availH / 10.6, 64));
+  document.documentElement.style.setProperty("--cell-size", cellSize + "px");
+  document.documentElement.style.setProperty("--groove-w", Math.max(8, Math.round(cellSize * 0.2)) + "px");
+}
+
+// ── Init ──
+
+recalcSize();
+buildBoard();
+updateWallPips();
+
+setTimeout(() => {
+  buildGrooveZones();
+  newGame();
+}, 50);
+
+window.addEventListener("resize", () => {
+  recalcSize();
+  buildGrooveZones();
+  if (state) render();
+});
+</script>
+</body>
+</html>
