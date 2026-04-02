@@ -429,6 +429,7 @@ let numPlayers = 2;
 let state = null;
 let history = [];
 let legalMoves = [];
+let legalWalls = [];    // [[wr, wc, orient], ...]
 let isRotated = false;
 let autoRotate = false;
 let shortestPaths = [];
@@ -648,7 +649,9 @@ function onCellClick(r, c) {
 
 function onGrooveClick(wr, wc, orient) {
   if (!state || state.winner !== null) return;
-  if (state.walls_remaining[state.current_player] <= 0) { showError("no walls left"); return; }
+  if (state.walls_remaining[state.current_player] <= 0) return;
+  // Only allow legal wall placements
+  if (!legalWalls.some(w => w[0] === wr && w[1] === wc && w[2] === orient)) return;
   sendMove({ type: "wall", pos: [wr, wc], orient });
 }
 
@@ -679,6 +682,7 @@ async function sendMove(moveData) {
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
+  legalWalls = legalJson.legal_walls || [];
   shortestPaths = legalJson.shortest_paths || [];
 
   applyRotation(state.current_player);
@@ -700,6 +704,7 @@ async function undoMove() {
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
+  legalWalls = legalJson.legal_walls || [];
   shortestPaths = legalJson.shortest_paths || [];
 
   applyRotation(state.current_player);
@@ -722,6 +727,7 @@ async function newGame(np) {
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
+  legalWalls = legalJson.legal_walls || [];
   shortestPaths = legalJson.shortest_paths || [];
   render();
 }
@@ -763,9 +769,16 @@ function showInfo() {
 // ── Button handlers ──
 
 document.getElementById("btn-undo").addEventListener("click", undoMove);
-document.getElementById("btn-new-2").addEventListener("click", () => newGame(2));
-document.getElementById("btn-new-4").addEventListener("click", () => newGame(4));
+document.getElementById("btn-new").addEventListener("click", () => newGame(numPlayers));
 document.getElementById("btn-play-again").addEventListener("click", () => newGame(numPlayers));
+document.getElementById("btn-start-2").addEventListener("click", () => {
+  document.getElementById("info-panel").classList.remove("show");
+  newGame(2);
+});
+document.getElementById("btn-start-4").addEventListener("click", () => {
+  document.getElementById("info-panel").classList.remove("show");
+  newGame(4);
+});
 document.getElementById("btn-info").addEventListener("click", showInfo);
 document.getElementById("btn-info-close").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
