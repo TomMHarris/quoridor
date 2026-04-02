@@ -424,15 +424,15 @@ const PAWN_CLASSES = ["pawn-light", "pawn-dark", "pawn-red", "pawn-teal"];
 const DOT_CLASSES = ["light", "dark", "red", "teal"];
 const PLAYER_NAMES = ["light", "dark", "red", "teal"];
 // 2-player colors: [light, dark]
-// 4-player colors (clockwise: bottom, right, top, left): [light, teal, dark, red]
-const FOUR_PLAYER_PAWN = ["pawn-light", "pawn-teal", "pawn-dark", "pawn-red"];
-const FOUR_PLAYER_DOT = ["light", "teal", "dark", "red"];
-const FOUR_PLAYER_NAME = ["light", "teal", "dark", "red"];
-// Rotation angles per player (goal appears at top)
+// 4-player colors (clockwise: bottom, left, top, right): [light, red, dark, teal]
+const FOUR_PLAYER_PAWN = ["pawn-light", "pawn-red", "pawn-dark", "pawn-teal"];
+const FOUR_PLAYER_DOT = ["light", "red", "dark", "teal"];
+const FOUR_PLAYER_NAME = ["light", "red", "dark", "teal"];
+// Rotation: current player ends up at the bottom
 // 2p: P0=0°, P1=180°
-// 4p clockwise (bottom, right, top, left): P0=0°, P1=270°, P2=180°, P3=90°
+// 4p (bottom, left, top, right): P0=0°, P1=90°, P2=180°, P3=270°
 const ROTATION_2P = [0, 180];
-const ROTATION_4P = [0, 270, 180, 90];
+const ROTATION_4P = [0, 90, 180, 270];
 
 let numPlayers = 2;
 
