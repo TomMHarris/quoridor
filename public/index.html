@@ -342,6 +342,7 @@
   <button class="action-btn cancel-btn" id="btn-cancel" style="display:none">cancel</button>
   <button class="action-btn" id="btn-undo">undo</button>
   <button class="action-btn" id="btn-new">new game</button>
+  <button class="action-btn" id="btn-rotate" title="Toggle board rotation between turns">rotate: off</button>
 </div>
 
 <div class="winner-overlay" id="winner-overlay">
@@ -362,6 +363,7 @@ let history = [];       // Move history sent with each API call
 let legalMoves = [];
 let wallGhost = null;
 let isRotated = false;
+let autoRotate = false; // Flip board between turns
 
 // ── API (stateless — sends history with each call) ──
 
@@ -556,6 +558,7 @@ function updateActionBar() {
   document.getElementById("btn-cancel").style.display = hasGhost ? "" : "none";
   document.getElementById("btn-undo").style.display = hasGhost ? "none" : "";
   document.getElementById("btn-new").style.display = hasGhost ? "none" : "";
+  document.getElementById("btn-rotate").style.display = hasGhost ? "none" : "";
   document.getElementById("btn-undo").disabled = !state || state.move_count === 0;
 }
 
@@ -601,8 +604,8 @@ async function sendMove(moveData) {
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
 
-  // Rotate board on turn change
-  if (state.current_player !== prevPlayer) {
+  // Rotate board on turn change (if enabled)
+  if (autoRotate && state.current_player !== prevPlayer) {
     isRotated = state.current_player === 1;
     document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
   }
@@ -626,7 +629,7 @@ async function undoMove() {
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
 
-  isRotated = state.current_player === 1;
+  isRotated = autoRotate && state.current_player === 1;
   document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
   render();
 }
@@ -670,6 +673,14 @@ document.getElementById("btn-cancel").addEventListener("click", () => { wallGhos
 document.getElementById("btn-undo").addEventListener("click", undoMove);
 document.getElementById("btn-new").addEventListener("click", newGame);
 document.getElementById("btn-play-again").addEventListener("click", newGame);
+document.getElementById("btn-rotate").addEventListener("click", () => {
+  autoRotate = !autoRotate;
+  document.getElementById("btn-rotate").textContent = autoRotate ? "rotate: on" : "rotate: off";
+  // Apply or remove rotation immediately
+  isRotated = autoRotate && state && state.current_player === 1;
+  document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
+  render();
+});
 
 // ── Sizing ──
 
