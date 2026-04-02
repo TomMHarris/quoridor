@@ -310,6 +310,111 @@
 
   .error-flash.show { opacity: 1; }
 
+  /* ── Info button + panel ── */
+  .info-btn {
+    position: fixed;
+    top: 10px;
+    right: 12px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1.5px solid var(--board-border);
+    background: var(--bg);
+    color: var(--text-light);
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 0.9rem;
+    font-style: italic;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    -webkit-tap-highlight-color: transparent;
+    transition: all 0.15s;
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .info-btn:active { background: var(--groove); }
+
+  .info-panel {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(250, 248, 244, 0.97);
+    z-index: 250;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .info-panel.show { opacity: 1; pointer-events: all; }
+
+  .info-content {
+    max-width: 400px;
+    width: 100%;
+    text-align: center;
+  }
+
+  .info-content h2 {
+    font-size: 1.8rem;
+    font-weight: 300;
+    letter-spacing: 0.1em;
+    margin-bottom: 20px;
+  }
+
+  .info-content p {
+    font-size: 0.95rem;
+    color: var(--text-mid);
+    line-height: 1.7;
+    margin-bottom: 12px;
+  }
+
+  .info-paths {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin: 20px 0;
+  }
+
+  .info-path-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--text-mid);
+  }
+
+  .info-path-item .player-dot {
+    width: 14px;
+    height: 14px;
+  }
+
+  .info-path-num {
+    font-size: 1.4rem;
+    font-weight: 300;
+    color: var(--text);
+    font-family: 'Cormorant Garamond', Georgia, serif;
+  }
+
+  .info-content button {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 1rem;
+    padding: 10px 28px;
+    background: var(--board-bg);
+    border: 1px solid var(--board-border);
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text);
+    margin-top: 8px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .info-content button:active { background: var(--groove); }
+
   @media (min-width: 768px) {
     .action-btn { font-size: 0.8rem; padding: 12px 20px; min-height: 48px; }
     .player-indicator { gap: 8px; }
@@ -354,6 +459,29 @@
 
 <div class="error-flash" id="error-flash"></div>
 
+<button class="info-btn" id="btn-info">i</button>
+
+<div class="info-panel" id="info-panel">
+  <div class="info-content">
+    <h2>quoridor</h2>
+    <p>Move your pawn to the opposite side of the board. Tap a cell to move, tap a groove to place a wall.</p>
+    <p>Walls block movement but every player must always have a path to their goal. Each player has 10 walls.</p>
+    <div class="info-paths" id="info-paths">
+      <div class="info-path-item">
+        <div class="player-dot light"></div>
+        <span class="info-path-num" id="info-path-0">-</span>
+        <span>moves to goal</span>
+      </div>
+      <div class="info-path-item">
+        <div class="player-dot dark"></div>
+        <span class="info-path-num" id="info-path-1">-</span>
+        <span>moves to goal</span>
+      </div>
+    </div>
+    <button id="btn-info-close">close</button>
+  </div>
+</div>
+
 <script>
 const BOARD = 9;
 const TOTAL_WALLS = 10;
@@ -363,7 +491,8 @@ let history = [];       // Move history sent with each API call
 let legalMoves = [];
 let wallGhost = null;
 let isRotated = false;
-let autoRotate = false; // Flip board between turns
+let autoRotate = false;
+let shortestPaths = [null, null];
 
 // ── API (stateless — sends history with each call) ──
 
@@ -603,6 +732,7 @@ async function sendMove(moveData) {
   // Fetch legal moves
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
+  shortestPaths = legalJson.shortest_paths || [null, null];
 
   // Rotate board on turn change (if enabled)
   if (autoRotate && state.current_player !== prevPlayer) {
@@ -628,6 +758,7 @@ async function undoMove() {
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
+  shortestPaths = legalJson.shortest_paths || [null, null];
 
   isRotated = autoRotate && state.current_player === 1;
   document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
@@ -647,6 +778,7 @@ async function newGame() {
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
+  shortestPaths = legalJson.shortest_paths || [null, null];
   render();
 }
 
@@ -673,6 +805,15 @@ document.getElementById("btn-cancel").addEventListener("click", () => { wallGhos
 document.getElementById("btn-undo").addEventListener("click", undoMove);
 document.getElementById("btn-new").addEventListener("click", newGame);
 document.getElementById("btn-play-again").addEventListener("click", newGame);
+document.getElementById("btn-info").addEventListener("click", () => {
+  document.getElementById("info-path-0").textContent = shortestPaths[0] != null ? shortestPaths[0] : "-";
+  document.getElementById("info-path-1").textContent = shortestPaths[1] != null ? shortestPaths[1] : "-";
+  document.getElementById("info-panel").classList.add("show");
+});
+document.getElementById("btn-info-close").addEventListener("click", () => {
+  document.getElementById("info-panel").classList.remove("show");
+});
+
 document.getElementById("btn-rotate").addEventListener("click", () => {
   autoRotate = !autoRotate;
   document.getElementById("btn-rotate").textContent = autoRotate ? "rotate: on" : "rotate: off";

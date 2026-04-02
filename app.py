@@ -85,7 +85,10 @@ def game_api():
         elif action == "legal":
             game = _game_from_history(hist)
             moves = game.get_legal_pawn_moves()
-            return jsonify({"pawn_moves": [list(m[1]) for m in moves]})
+            return jsonify({
+                "pawn_moves": [list(m[1]) for m in moves],
+                "shortest_paths": [game.shortest_path_length(0), game.shortest_path_length(1)],
+            })
 
         else:
             return jsonify({"error": f"Unknown action: {action}"}), 400

@@ -82,7 +82,10 @@ class handler(BaseHTTPRequestHandler):
             elif action == "legal":
                 game = _game_from_history(history)
                 moves = game.get_legal_pawn_moves()
-                self._json_response(200, {"pawn_moves": [list(m[1]) for m in moves]})
+                self._json_response(200, {
+                    "pawn_moves": [list(m[1]) for m in moves],
+                    "shortest_paths": [game.shortest_path_length(0), game.shortest_path_length(1)],
+                })
                 return
 
             else:
