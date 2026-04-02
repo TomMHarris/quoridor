@@ -20,6 +20,10 @@
     --pawn-light-edge: #CEBB8E;
     --pawn-dark: #5C3A1E;
     --pawn-dark-edge: #3D2510;
+    --pawn-red: #C06040;
+    --pawn-red-edge: #8E4030;
+    --pawn-teal: #3A6B6B;
+    --pawn-teal-edge: #264848;
     --highlight: #C4A56E44;
     --highlight-strong: #C4A56E88;
     --text: #2C2C2C;
@@ -58,16 +62,17 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 14px;
+    gap: 10px;
     padding: 12px 16px 8px;
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
   .player-indicator {
     display: flex;
     align-items: center;
-    gap: 6px;
-    opacity: 0.45;
+    gap: 5px;
+    opacity: 0.4;
     transition: opacity 0.3s;
   }
 
@@ -85,10 +90,17 @@
     background: radial-gradient(circle at 40% 35%, #FFF8EC, var(--pawn-light));
     border: 1px solid var(--pawn-light-edge);
   }
-
   .player-dot.dark {
     background: radial-gradient(circle at 40% 35%, #7A5535, var(--pawn-dark));
     border: 1px solid var(--pawn-dark-edge);
+  }
+  .player-dot.red {
+    background: radial-gradient(circle at 40% 35%, #E08060, var(--pawn-red));
+    border: 1px solid var(--pawn-red-edge);
+  }
+  .player-dot.teal {
+    background: radial-gradient(circle at 40% 35%, #5A9B9B, var(--pawn-teal));
+    border: 1px solid var(--pawn-teal-edge);
   }
 
   .wall-pips { display: flex; gap: 2px; }
@@ -103,15 +115,6 @@
   }
 
   .wall-pip.used { opacity: 0.15; }
-
-  .turn-label {
-    font-size: 1rem;
-    font-weight: 400;
-    font-style: italic;
-    color: var(--text-mid);
-    min-width: 24px;
-    text-align: center;
-  }
 
   .board-area {
     flex: 1;
@@ -131,8 +134,6 @@
     transition: transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
     will-change: transform;
   }
-
-  .board-wrapper.rotated { transform: rotate(180deg); }
 
   .board {
     display: grid;
@@ -175,10 +176,17 @@
     background: radial-gradient(circle at 40% 35%, #FFF8EC 0%, var(--pawn-light) 60%, var(--pawn-light-edge) 100%);
     border: 1.5px solid var(--pawn-light-edge);
   }
-
   .pawn-dark {
     background: radial-gradient(circle at 40% 35%, #7A5535 0%, var(--pawn-dark) 60%, var(--pawn-dark-edge) 100%);
     border: 1.5px solid var(--pawn-dark-edge);
+  }
+  .pawn-red {
+    background: radial-gradient(circle at 40% 35%, #E08060 0%, var(--pawn-red) 60%, var(--pawn-red-edge) 100%);
+    border: 1.5px solid var(--pawn-red-edge);
+  }
+  .pawn-teal {
+    background: radial-gradient(circle at 40% 35%, #5A9B9B 0%, var(--pawn-teal) 60%, var(--pawn-teal-edge) 100%);
+    border: 1.5px solid var(--pawn-teal-edge);
   }
 
   .groove-zone {
@@ -188,10 +196,9 @@
     border-radius: 2px;
     -webkit-tap-highlight-color: transparent;
   }
-
   .groove-zone:hover, .groove-zone:active { background: var(--groove-hover); }
 
-  .wall-placed, .wall-ghost {
+  .wall-placed {
     position: absolute;
     background: var(--wall);
     border: 1px solid var(--wall-edge);
@@ -199,17 +206,6 @@
     z-index: 10;
     box-shadow: 1px 1px 3px #00000015;
     pointer-events: none;
-  }
-
-  .wall-ghost {
-    z-index: 9;
-    opacity: 0.45;
-    animation: ghost-pulse 1s ease-in-out infinite;
-  }
-
-  @keyframes ghost-pulse {
-    0%, 100% { opacity: 0.45; }
-    50% { opacity: 0.65; }
   }
 
   .action-bar {
@@ -228,7 +224,7 @@
   .action-btn {
     font-family: 'DM Mono', monospace;
     font-size: 0.72rem;
-    padding: 10px 16px;
+    padding: 10px 14px;
     min-height: 44px;
     background: var(--board-bg);
     border: 1.5px solid var(--board-border);
@@ -241,8 +237,6 @@
 
   .action-btn:active { background: var(--groove); }
   .action-btn:disabled { opacity: 0.3; pointer-events: none; }
-  .action-btn.confirm-btn { background: var(--wall); color: white; border-color: var(--wall-edge); }
-  .action-btn.cancel-btn { color: var(--accent); border-color: var(--accent); }
 
   .winner-overlay {
     position: fixed;
@@ -257,24 +251,10 @@
     pointer-events: none;
     transition: opacity 0.4s;
   }
-
   .winner-overlay.show { opacity: 1; pointer-events: all; }
-
   .winner-overlay .player-dot { width: 56px; height: 56px; margin-bottom: 20px; }
-
-  .winner-overlay h2 {
-    font-size: 2.2rem;
-    font-weight: 300;
-    letter-spacing: 0.1em;
-    margin-bottom: 6px;
-  }
-
-  .winner-overlay p {
-    font-style: italic;
-    color: var(--text-mid);
-    margin-bottom: 28px;
-  }
-
+  .winner-overlay h2 { font-size: 2.2rem; font-weight: 300; letter-spacing: 0.1em; margin-bottom: 6px; }
+  .winner-overlay p { font-style: italic; color: var(--text-mid); margin-bottom: 28px; }
   .winner-overlay button {
     font-family: 'Cormorant Garamond', Georgia, serif;
     font-size: 1rem;
@@ -286,7 +266,6 @@
     color: var(--text);
     -webkit-tap-highlight-color: transparent;
   }
-
   .winner-overlay button:active { background: var(--groove); }
 
   .error-flash {
@@ -307,10 +286,8 @@
     pointer-events: none;
     white-space: nowrap;
   }
-
   .error-flash.show { opacity: 1; }
 
-  /* ── Info button + panel ── */
   .info-btn {
     position: fixed;
     top: 10px;
@@ -333,7 +310,6 @@
     transition: all 0.15s;
     padding-top: env(safe-area-inset-top);
   }
-
   .info-btn:active { background: var(--groove); }
 
   .info-panel {
@@ -349,49 +325,30 @@
     justify-content: center;
     padding: 20px;
   }
-
   .info-panel.show { opacity: 1; pointer-events: all; }
 
-  .info-content {
-    max-width: 400px;
-    width: 100%;
-    text-align: center;
-  }
-
-  .info-content h2 {
-    font-size: 1.8rem;
-    font-weight: 300;
-    letter-spacing: 0.1em;
-    margin-bottom: 20px;
-  }
-
-  .info-content p {
-    font-size: 0.95rem;
-    color: var(--text-mid);
-    line-height: 1.7;
-    margin-bottom: 12px;
-  }
+  .info-content { max-width: 400px; width: 100%; text-align: center; }
+  .info-content h2 { font-size: 1.8rem; font-weight: 300; letter-spacing: 0.1em; margin-bottom: 20px; }
+  .info-content p { font-size: 0.95rem; color: var(--text-mid); line-height: 1.7; margin-bottom: 12px; }
 
   .info-paths {
     display: flex;
     justify-content: center;
-    gap: 24px;
+    gap: 20px;
     margin: 20px 0;
+    flex-wrap: wrap;
   }
 
   .info-path-item {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     font-family: 'DM Mono', monospace;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     color: var(--text-mid);
   }
 
-  .info-path-item .player-dot {
-    width: 14px;
-    height: 14px;
-  }
+  .info-path-item .player-dot { width: 14px; height: 14px; }
 
   .info-path-num {
     font-size: 1.4rem;
@@ -412,29 +369,17 @@
     margin-top: 8px;
     -webkit-tap-highlight-color: transparent;
   }
-
   .info-content button:active { background: var(--groove); }
 
   @media (min-width: 768px) {
-    .action-btn { font-size: 0.8rem; padding: 12px 20px; min-height: 48px; }
+    .action-btn { font-size: 0.8rem; padding: 12px 18px; min-height: 48px; }
     .player-indicator { gap: 8px; }
-    .turn-label { font-size: 1.15rem; }
   }
 </style>
 </head>
 <body>
 
-<div class="top-bar">
-  <div class="player-indicator" id="p0-indicator">
-    <div class="player-dot light"></div>
-    <div class="wall-pips" id="p0-pips"></div>
-  </div>
-  <div class="turn-label" id="turn-label"></div>
-  <div class="player-indicator" id="p1-indicator">
-    <div class="wall-pips" id="p1-pips"></div>
-    <div class="player-dot dark"></div>
-  </div>
-</div>
+<div class="top-bar" id="top-bar"></div>
 
 <div class="board-area">
   <div class="board-wrapper" id="board-wrapper">
@@ -443,11 +388,9 @@
 </div>
 
 <div class="action-bar" id="action-bar">
-  <button class="action-btn confirm-btn" id="btn-confirm" style="display:none">place wall</button>
-  <button class="action-btn cancel-btn" id="btn-cancel" style="display:none">cancel</button>
   <button class="action-btn" id="btn-undo">undo</button>
   <button class="action-btn" id="btn-new">new game</button>
-  <button class="action-btn" id="btn-rotate" title="Toggle board rotation between turns">rotate: off</button>
+  <button class="action-btn" id="btn-rotate">rotate: off</button>
 </div>
 
 <div class="winner-overlay" id="winner-overlay">
@@ -458,25 +401,17 @@
 </div>
 
 <div class="error-flash" id="error-flash"></div>
-
 <button class="info-btn" id="btn-info">i</button>
 
 <div class="info-panel" id="info-panel">
   <div class="info-content">
     <h2>quoridor</h2>
     <p>Move your pawn to the opposite side of the board. Tap a cell to move, tap a groove to place a wall.</p>
-    <p>Walls block movement but every player must always have a path to their goal. Each player has 10 walls.</p>
-    <div class="info-paths" id="info-paths">
-      <div class="info-path-item">
-        <div class="player-dot light"></div>
-        <span class="info-path-num" id="info-path-0">-</span>
-        <span>moves to goal</span>
-      </div>
-      <div class="info-path-item">
-        <div class="player-dot dark"></div>
-        <span class="info-path-num" id="info-path-1">-</span>
-        <span>moves to goal</span>
-      </div>
+    <p>Walls block movement but every player must always have a path to their goal.</p>
+    <div class="info-paths" id="info-paths"></div>
+    <div style="margin: 16px 0 8px; display: flex; justify-content: center; gap: 10px;">
+      <button id="btn-start-2" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 2 player</button>
+      <button id="btn-start-4" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 4 player</button>
     </div>
     <button id="btn-info-close">close</button>
   </div>
@@ -484,24 +419,28 @@
 
 <script>
 const BOARD = 9;
-const TOTAL_WALLS = 10;
+const PAWN_CLASSES = ["pawn-light", "pawn-dark", "pawn-red", "pawn-teal"];
+const DOT_CLASSES = ["light", "dark", "red", "teal"];
+const PLAYER_NAMES = ["light", "dark", "red", "teal"];
+// Rotation angles: each player's goal appears at the top
+const ROTATION_ANGLES = [0, 180, 90, 270];
 
+let numPlayers = 2;
 let state = null;
-let history = [];       // Move history sent with each API call
+let history = [];
 let legalMoves = [];
-let wallGhost = null;
 let isRotated = false;
 let autoRotate = false;
-let shortestPaths = [null, null];
+let shortestPaths = [];
 
-// ── API (stateless — sends history with each call) ──
+// ── API ──
 
 async function apiCall(action, extra = {}) {
   try {
     const res = await fetch("/api/game", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, history, ...extra }),
+      body: JSON.stringify({ action, history, num_players: numPlayers, ...extra }),
     });
     return await res.json();
   } catch (e) {
@@ -509,7 +448,30 @@ async function apiCall(action, extra = {}) {
   }
 }
 
-// ── Board building ──
+// ── Top bar (dynamic) ──
+
+function buildTopBar() {
+  const bar = document.getElementById("top-bar");
+  bar.innerHTML = "";
+  for (let p = 0; p < numPlayers; p++) {
+    const indicator = document.createElement("div");
+    indicator.className = "player-indicator";
+    indicator.id = `p${p}-indicator`;
+
+    const dot = document.createElement("div");
+    dot.className = `player-dot ${DOT_CLASSES[p]}`;
+    indicator.appendChild(dot);
+
+    const pips = document.createElement("div");
+    pips.className = "wall-pips";
+    pips.id = `p${p}-pips`;
+    indicator.appendChild(pips);
+
+    bar.appendChild(indicator);
+  }
+}
+
+// ── Board ──
 
 function buildBoard() {
   const board = document.getElementById("board");
@@ -528,7 +490,6 @@ function buildBoard() {
 
 function buildGrooveZones() {
   document.querySelectorAll(".groove-zone").forEach(e => e.remove());
-
   const board = document.getElementById("board");
   const cells = board.querySelectorAll(".cell");
   if (!cells.length) return;
@@ -540,37 +501,29 @@ function buildGrooveZones() {
   const gapX = BOARD > 1 ? (boardW - BOARD * cellW) / (BOARD - 1) : 0;
   const gapY = BOARD > 1 ? (boardH - BOARD * cellH) / (BOARD - 1) : 0;
 
-  // Horizontal zones (trimmed to avoid cross-points)
   for (let wr = 0; wr < 8; wr++) {
     for (let wc = 0; wc < 8; wc++) {
-      const zone = document.createElement("div");
-      zone.className = "groove-zone";
-      zone.style.left = (wc * (cellW + gapX) + gapX / 2) + "px";
-      zone.style.top = ((wr + 1) * cellH + wr * gapY) + "px";
-      zone.style.width = (cellW * 2) + "px";
-      zone.style.height = gapY + "px";
-      zone.addEventListener("click", (e) => { e.stopPropagation(); onGrooveClick(wr, wc, "H"); });
-      board.appendChild(zone);
-    }
-  }
+      // H zone
+      const hz = document.createElement("div");
+      hz.className = "groove-zone";
+      hz.style.left = (wc * (cellW + gapX) + gapX / 2) + "px";
+      hz.style.top = ((wr + 1) * cellH + wr * gapY) + "px";
+      hz.style.width = (cellW * 2) + "px";
+      hz.style.height = gapY + "px";
+      hz.addEventListener("click", (e) => { e.stopPropagation(); onGrooveClick(wr, wc, "H"); });
+      board.appendChild(hz);
 
-  // Vertical zones (trimmed to avoid cross-points)
-  for (let wr = 0; wr < 8; wr++) {
-    for (let wc = 0; wc < 8; wc++) {
-      const zone = document.createElement("div");
-      zone.className = "groove-zone";
-      zone.style.left = ((wc + 1) * cellW + wc * gapX) + "px";
-      zone.style.top = (wr * (cellH + gapY) + gapY / 2) + "px";
-      zone.style.width = gapX + "px";
-      zone.style.height = (cellH * 2) + "px";
-      zone.addEventListener("click", (e) => { e.stopPropagation(); onGrooveClick(wr, wc, "V"); });
-      board.appendChild(zone);
-    }
-  }
+      // V zone
+      const vz = document.createElement("div");
+      vz.className = "groove-zone";
+      vz.style.left = ((wc + 1) * cellW + wc * gapX) + "px";
+      vz.style.top = (wr * (cellH + gapY) + gapY / 2) + "px";
+      vz.style.width = gapX + "px";
+      vz.style.height = (cellH * 2) + "px";
+      vz.addEventListener("click", (e) => { e.stopPropagation(); onGrooveClick(wr, wc, "V"); });
+      board.appendChild(vz);
 
-  // Cross-point zones — detect H vs V based on click position
-  for (let wr = 0; wr < 8; wr++) {
-    for (let wc = 0; wc < 8; wc++) {
+      // Cross-point
       const cross = document.createElement("div");
       cross.className = "groove-zone";
       cross.style.left = ((wc + 1) * cellW + wc * gapX) + "px";
@@ -594,7 +547,7 @@ function buildGrooveZones() {
 function render() {
   if (!state) return;
 
-  document.querySelectorAll(".pawn, .wall-placed, .wall-ghost").forEach(e => e.remove());
+  document.querySelectorAll(".pawn, .wall-placed").forEach(e => e.remove());
   document.querySelectorAll(".cell").forEach(e => e.classList.remove("legal-move"));
 
   const board = document.getElementById("board");
@@ -608,12 +561,13 @@ function render() {
   const gapY = gapX;
 
   // Pawns
-  for (let p = 0; p < 2; p++) {
+  const np = state.num_players || numPlayers;
+  for (let p = 0; p < np; p++) {
     const [pr, pc] = state.pawns[p];
     const cell = getCell(pr, pc);
     if (cell) {
       const el = document.createElement("div");
-      el.className = `pawn ${p === 0 ? "pawn-light" : "pawn-dark"}`;
+      el.className = `pawn ${PAWN_CLASSES[p]}`;
       cell.appendChild(el);
     }
   }
@@ -623,13 +577,8 @@ function render() {
     renderWall(board, wr, wc, orient, "wall-placed", cellW, cellH, gapX, gapY);
   }
 
-  // Ghost
-  if (wallGhost) {
-    renderWall(board, wallGhost.wr, wallGhost.wc, wallGhost.orient, "wall-ghost", cellW, cellH, gapX, gapY);
-  }
-
-  // Legal moves (only when no ghost)
-  if (!wallGhost && state.winner === null) {
+  // Legal moves
+  if (state.winner === null) {
     for (const m of legalMoves) {
       const cell = getCell(m[0], m[1]);
       if (cell) cell.classList.add("legal-move");
@@ -638,10 +587,11 @@ function render() {
 
   updateWallPips();
 
-  const turnLabel = document.getElementById("turn-label");
-  turnLabel.textContent = state.winner !== null ? "" : (state.current_player === 0 ? "\u25C0" : "\u25B6");
-  document.getElementById("p0-indicator").classList.toggle("active", state.current_player === 0);
-  document.getElementById("p1-indicator").classList.toggle("active", state.current_player === 1);
+  // Active player indicator
+  for (let p = 0; p < np; p++) {
+    const el = document.getElementById(`p${p}-indicator`);
+    if (el) el.classList.toggle("active", state.current_player === p);
+  }
 
   updateActionBar();
 }
@@ -669,11 +619,14 @@ function getCell(r, c) {
 }
 
 function updateWallPips() {
-  for (let p = 0; p < 2; p++) {
+  const np = state ? (state.num_players || numPlayers) : numPlayers;
+  const totalWalls = np === 4 ? 5 : 10;
+  for (let p = 0; p < np; p++) {
     const container = document.getElementById(`p${p}-pips`);
+    if (!container) continue;
     container.innerHTML = "";
-    const remaining = state ? state.walls_remaining[p] : TOTAL_WALLS;
-    for (let i = 0; i < TOTAL_WALLS; i++) {
+    const remaining = state ? state.walls_remaining[p] : totalWalls;
+    for (let i = 0; i < totalWalls; i++) {
       const pip = document.createElement("div");
       pip.className = `wall-pip ${i >= remaining ? "used" : ""}`;
       container.appendChild(pip);
@@ -682,12 +635,6 @@ function updateWallPips() {
 }
 
 function updateActionBar() {
-  const hasGhost = wallGhost !== null;
-  document.getElementById("btn-confirm").style.display = hasGhost ? "" : "none";
-  document.getElementById("btn-cancel").style.display = hasGhost ? "" : "none";
-  document.getElementById("btn-undo").style.display = hasGhost ? "none" : "";
-  document.getElementById("btn-new").style.display = hasGhost ? "none" : "";
-  document.getElementById("btn-rotate").style.display = hasGhost ? "none" : "";
   document.getElementById("btn-undo").disabled = !state || state.move_count === 0;
 }
 
@@ -695,7 +642,6 @@ function updateActionBar() {
 
 function onCellClick(r, c) {
   if (!state || state.winner !== null) return;
-  if (wallGhost) { wallGhost = null; render(); return; }
   if (!legalMoves.some(m => m[0] === r && m[1] === c)) return;
   sendMove({ type: "move", to: [r, c] });
 }
@@ -703,18 +649,21 @@ function onCellClick(r, c) {
 function onGrooveClick(wr, wc, orient) {
   if (!state || state.winner !== null) return;
   if (state.walls_remaining[state.current_player] <= 0) { showError("no walls left"); return; }
-  if (wallGhost && wallGhost.wr === wr && wallGhost.wc === wc && wallGhost.orient === orient) {
-    confirmWall();
-    return;
-  }
-  wallGhost = { wr, wc, orient };
-  render();
+  sendMove({ type: "wall", pos: [wr, wc], orient });
 }
 
-function confirmWall() {
-  if (!wallGhost) return;
-  sendMove({ type: "wall", pos: [wallGhost.wr, wallGhost.wc], orient: wallGhost.orient });
+// ── Rotation ──
+
+function applyRotation(player) {
+  if (!autoRotate) {
+    document.getElementById("board-wrapper").style.transform = "";
+    return;
+  }
+  const angle = ROTATION_ANGLES[player] || 0;
+  document.getElementById("board-wrapper").style.transform = angle ? `rotate(${angle}deg)` : "";
 }
+
+// ── API actions ──
 
 async function sendMove(moveData) {
   const json = await apiCall("move", { move: moveData });
@@ -724,22 +673,15 @@ async function sendMove(moveData) {
     return;
   }
 
-  const prevPlayer = state ? state.current_player : 0;
   state = json.state;
   history = json.history;
-  wallGhost = null;
 
-  // Fetch legal moves
+
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
-  shortestPaths = legalJson.shortest_paths || [null, null];
+  shortestPaths = legalJson.shortest_paths || [];
 
-  // Rotate board on turn change (if enabled)
-  if (autoRotate && state.current_player !== prevPlayer) {
-    isRotated = state.current_player === 1;
-    document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
-  }
-
+  applyRotation(state.current_player);
   render();
 
   if (state.winner !== null) {
@@ -754,37 +696,40 @@ async function undoMove() {
 
   state = json.state;
   history = json.history;
-  wallGhost = null;
+
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
-  shortestPaths = legalJson.shortest_paths || [null, null];
+  shortestPaths = legalJson.shortest_paths || [];
 
-  isRotated = autoRotate && state.current_player === 1;
-  document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
+  applyRotation(state.current_player);
   render();
 }
 
-async function newGame() {
+async function newGame(np) {
+  numPlayers = np || 2;
   document.getElementById("winner-overlay").classList.remove("show");
+
+  buildTopBar();
+
   const json = await apiCall("new");
   if (json.error) { showError(json.error); return; }
 
   state = json.state;
   history = json.history;
-  wallGhost = null;
-  isRotated = false;
-  document.getElementById("board-wrapper").classList.remove("rotated");
+
+  document.getElementById("board-wrapper").style.transform = "";
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
-  shortestPaths = legalJson.shortest_paths || [null, null];
+  shortestPaths = legalJson.shortest_paths || [];
   render();
 }
 
 function showWinner() {
-  document.getElementById("winner-dot").className = `player-dot ${state.winner === 0 ? "light" : "dark"}`;
-  document.getElementById("winner-title").textContent = state.winner === 0 ? "light wins" : "dark wins";
+  const w = state.winner;
+  document.getElementById("winner-dot").className = `player-dot ${DOT_CLASSES[w]}`;
+  document.getElementById("winner-title").textContent = `${PLAYER_NAMES[w]} wins`;
   document.getElementById("winner-sub").textContent = `${state.move_count} moves`;
   document.getElementById("winner-overlay").classList.add("show");
 }
@@ -798,18 +743,30 @@ function showError(msg) {
   errorTimeout = setTimeout(() => el.classList.remove("show"), 2000);
 }
 
+// ── Info panel ──
+
+function showInfo() {
+  const container = document.getElementById("info-paths");
+  container.innerHTML = "";
+  const np = state ? (state.num_players || numPlayers) : numPlayers;
+  for (let p = 0; p < np; p++) {
+    const item = document.createElement("div");
+    item.className = "info-path-item";
+    item.innerHTML = `<div class="player-dot ${DOT_CLASSES[p]}"></div>` +
+      `<span class="info-path-num">${shortestPaths[p] != null ? shortestPaths[p] : "-"}</span>` +
+      `<span>to goal</span>`;
+    container.appendChild(item);
+  }
+  document.getElementById("info-panel").classList.add("show");
+}
+
 // ── Button handlers ──
 
-document.getElementById("btn-confirm").addEventListener("click", confirmWall);
-document.getElementById("btn-cancel").addEventListener("click", () => { wallGhost = null; render(); });
 document.getElementById("btn-undo").addEventListener("click", undoMove);
-document.getElementById("btn-new").addEventListener("click", newGame);
-document.getElementById("btn-play-again").addEventListener("click", newGame);
-document.getElementById("btn-info").addEventListener("click", () => {
-  document.getElementById("info-path-0").textContent = shortestPaths[0] != null ? shortestPaths[0] : "-";
-  document.getElementById("info-path-1").textContent = shortestPaths[1] != null ? shortestPaths[1] : "-";
-  document.getElementById("info-panel").classList.add("show");
-});
+document.getElementById("btn-new-2").addEventListener("click", () => newGame(2));
+document.getElementById("btn-new-4").addEventListener("click", () => newGame(4));
+document.getElementById("btn-play-again").addEventListener("click", () => newGame(numPlayers));
+document.getElementById("btn-info").addEventListener("click", showInfo);
 document.getElementById("btn-info-close").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
 });
@@ -817,17 +774,17 @@ document.getElementById("btn-info-close").addEventListener("click", () => {
 document.getElementById("btn-rotate").addEventListener("click", () => {
   autoRotate = !autoRotate;
   document.getElementById("btn-rotate").textContent = autoRotate ? "rotate: on" : "rotate: off";
-  // Apply or remove rotation immediately
-  isRotated = autoRotate && state && state.current_player === 1;
-  document.getElementById("board-wrapper").classList.toggle("rotated", isRotated);
-  render();
+  if (state) {
+    applyRotation(state.current_player);
+    render();
+  }
 });
 
 // ── Sizing ──
 
 function recalcSize() {
-  const topH = document.querySelector(".top-bar").offsetHeight;
-  const botH = document.querySelector(".action-bar").offsetHeight;
+  const topH = document.querySelector(".top-bar").offsetHeight || 44;
+  const botH = document.querySelector(".action-bar").offsetHeight || 65;
   const availW = window.innerWidth - 28;
   const availH = window.innerHeight - topH - botH - 20;
   const cellSize = Math.floor(Math.min(availW / 10.6, availH / 10.6, 64));
@@ -839,11 +796,12 @@ function recalcSize() {
 
 recalcSize();
 buildBoard();
+buildTopBar();
 updateWallPips();
 
 setTimeout(() => {
   buildGrooveZones();
-  newGame();
+  newGame(2);
 }, 50);
 
 window.addEventListener("resize", () => {

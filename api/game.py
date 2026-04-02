@@ -1,7 +1,7 @@
 """
-Stateless Vercel serverless function for Quoridor.
+Stateless Vercel serverless function for Quoridor (2 or 4 players).
 
-The client sends the full move history with each request.
+The client sends the full move history + num_players with each request.
 The server replays it, validates the new move, and returns the updated state.
 """
 
@@ -10,14 +10,12 @@ import sys
 import os
 from http.server import BaseHTTPRequestHandler
 
-# Add parent dir so we can import engine
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from engine import QuoridorGame
 
 
-def _game_from_history(history):
-    """Replay a move history to reconstruct game state."""
-    game = QuoridorGame(2)
+def _game_from_history(history, num_players=2):
+    game = QuoridorGame(num_players)
     for move in history:
         action = move[0]
         if action == "move":
@@ -35,11 +33,11 @@ def _game_to_json(game):
         "current_player": game.current_player,
         "winner": game.winner,
         "move_count": len(game.move_history),
+        "num_players": game.num_players,
     }
 
 
 def _history_to_json(game):
-    """Convert engine move history to JSON-serializable format."""
     result = []
     for action, data in game.move_history:
         if action == "move":
@@ -56,15 +54,17 @@ class handler(BaseHTTPRequestHandler):
 
         action = body.get("action", "new")
         history = body.get("history", [])
+        np = body.get("num_players", 2)
+        if np not in (2, 4):
+            np = 2
 
         try:
             if action == "new":
-                game = QuoridorGame(2)
+                game = QuoridorGame(np)
 
             elif action == "move":
-                game = _game_from_history(history)
+                game = _game_from_history(history, np)
                 move_data = body.get("move", {})
-
                 if move_data.get("type") == "move":
                     game.make_move(("move", tuple(move_data["to"])))
                 elif move_data.get("type") == "wall":
@@ -77,14 +77,16 @@ class handler(BaseHTTPRequestHandler):
                 if not history:
                     self._json_response(400, {"error": "No moves to undo"})
                     return
-                game = _game_from_history(history[:-1])
+                game = _game_from_history(history[:-1], np)
 
             elif action == "legal":
-                game = _game_from_history(history)
-                moves = game.get_legal_pawn_moves()
+                game = _game_from_history(history, np)
+                pawn_moves = game.get_legal_pawn_moves()
+                wall_moves = game.get_legal_walls()
                 self._json_response(200, {
-                    "pawn_moves": [list(m[1]) for m in moves],
-                    "shortest_paths": [game.shortest_path_length(0), game.shortest_path_length(1)],
+                    "pawn_moves": [list(m[1]) for m in pawn_moves],
+                    "legal_walls": [[m[1][0], m[1][1], m[1][2]] for m in wall_moves],
+                    "shortest_paths": [game.shortest_path_length(p) for p in range(np)],
                 })
                 return
 
@@ -92,7 +94,6 @@ class handler(BaseHTTPRequestHandler):
                 self._json_response(400, {"error": f"Unknown action: {action}"})
                 return
 
-            # Return state + updated history
             self._json_response(200, {
                 "state": _game_to_json(game),
                 "history": _history_to_json(game),

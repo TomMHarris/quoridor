@@ -1,5 +1,5 @@
 """
-Flask web server for two-player local Quoridor.
+Flask web server for local Quoridor (2 or 4 players).
 Serves both the stateless API (matching Vercel) and the frontend.
 
 Usage:
@@ -17,8 +17,8 @@ from engine import QuoridorGame
 app = Flask(__name__, static_folder="public")
 
 
-def _game_from_history(history):
-    game = QuoridorGame(2)
+def _game_from_history(history, num_players=2):
+    game = QuoridorGame(num_players)
     for move in history:
         action = move[0]
         if action == "move":
@@ -36,6 +36,7 @@ def _game_to_json(game):
         "current_player": game.current_player,
         "winner": game.winner,
         "move_count": len(game.move_history),
+        "num_players": game.num_players,
     }
 
 
@@ -62,13 +63,16 @@ def game_api():
     data = request.get_json() or {}
     action = data.get("action", "new")
     hist = data.get("history", [])
+    np = data.get("num_players", 2)
+    if np not in (2, 4):
+        np = 2
 
     try:
         if action == "new":
-            game = QuoridorGame(2)
+            game = QuoridorGame(np)
 
         elif action == "move":
-            game = _game_from_history(hist)
+            game = _game_from_history(hist, np)
             move_data = data.get("move", {})
             if move_data.get("type") == "move":
                 game.make_move(("move", tuple(move_data["to"])))
@@ -80,14 +84,16 @@ def game_api():
         elif action == "undo":
             if not hist:
                 return jsonify({"error": "No moves to undo"}), 400
-            game = _game_from_history(hist[:-1])
+            game = _game_from_history(hist[:-1], np)
 
         elif action == "legal":
-            game = _game_from_history(hist)
-            moves = game.get_legal_pawn_moves()
+            game = _game_from_history(hist, np)
+            pawn_moves = game.get_legal_pawn_moves()
+            wall_moves = game.get_legal_walls()
             return jsonify({
-                "pawn_moves": [list(m[1]) for m in moves],
-                "shortest_paths": [game.shortest_path_length(0), game.shortest_path_length(1)],
+                "pawn_moves": [list(m[1]) for m in pawn_moves],
+                "legal_walls": [[m[1][0], m[1][1], m[1][2]] for m in wall_moves],
+                "shortest_paths": [game.shortest_path_length(p) for p in range(np)],
             })
 
         else:
