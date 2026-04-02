@@ -1,16 +1,7 @@
 {
-  "builds": [
-    {
-      "src": "api/game.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "public/**",
-      "use": "@vercel/static"
-    }
+  "framework": null,
+  "rewrites": [
+    { "source": "/api/game", "destination": "/api/game" }
   ],
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/game.py" },
-    { "src": "/(.*)", "dest": "/public/$1" }
-  ]
+  "outputDirectory": "public"
 }
