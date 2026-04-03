@@ -1,45 +1,39 @@
 """
-Thin Upstash Redis REST API wrapper. Zero external dependencies (stdlib only).
+Redis wrapper for online room storage.
 
-Expects environment variables:
-  KV_REST_API_URL   — Upstash REST endpoint (e.g. https://xxx.upstash.io)
-  KV_REST_API_TOKEN — Upstash REST token
+Uses REDIS_URL environment variable (set automatically by Vercel Redis integration).
 """
 
 import os
 import json
-import urllib.request
+import redis
 
-KV_URL = os.environ.get("KV_REST_API_URL", "")
-KV_TOKEN = os.environ.get("KV_REST_API_TOKEN", "")
+REDIS_URL = os.environ.get("REDIS_URL", "")
+
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None and REDIS_URL:
+        _client = redis.from_url(REDIS_URL, decode_responses=True)
+    return _client
 
 
 def available():
-    return bool(KV_URL and KV_TOKEN)
-
-
-def _request(command_args):
-    """Send a Redis command to Upstash REST API."""
-    req = urllib.request.Request(
-        KV_URL,
-        data=json.dumps(command_args).encode(),
-        headers={
-            "Authorization": f"Bearer {KV_TOKEN}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read())["result"]
+    return bool(REDIS_URL)
 
 
 def get(key):
-    val = _request(["GET", key])
+    r = _get_client()
+    if not r:
+        return None
+    val = r.get(key)
     return json.loads(val) if val else None
 
 
 def set(key, value, ex=None):
-    args = ["SET", key, json.dumps(value)]
-    if ex:
-        args += ["EX", str(ex)]
-    return _request(args)
+    r = _get_client()
+    if not r:
+        return None
+    return r.set(key, json.dumps(value), ex=ex)
