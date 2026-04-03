@@ -55,6 +55,11 @@ def index():
     return send_from_directory("public", "index.html")
 
 
+@app.route("/<path:filename>")
+def static_files(filename):
+    return send_from_directory("public", filename)
+
+
 @app.route("/api/game", methods=["POST", "OPTIONS"])
 def game_api():
     if request.method == "OPTIONS":

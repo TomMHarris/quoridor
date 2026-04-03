@@ -7,6 +7,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>quoridor</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23F0EBE0'/><circle cx='16' cy='16' r='9' fill='%23C4A56E' stroke='%23A8894F' stroke-width='1.5'/></svg>">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#FAF8F4">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -426,6 +429,12 @@
       <button id="btn-start-2" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 2p local</button>
       <button id="btn-start-4" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 4p local</button>
     </div>
+    <p style="font-size:0.85rem; color:var(--text-light); margin:12px 0 8px; font-style:italic;">vs computer</p>
+    <div style="display: flex; justify-content: center; gap: 10px;">
+      <button id="btn-ai-easy" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">easy</button>
+      <button id="btn-ai-medium" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">medium</button>
+      <button id="btn-ai-hard" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">hard</button>
+    </div>
     <p style="font-size:0.85rem; color:var(--text-light); margin:12px 0 8px; font-style:italic;">play online</p>
     <div style="display: flex; justify-content: center; gap: 10px;">
       <button id="btn-online-2" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">2p online</button>
@@ -435,6 +444,7 @@
   </div>
 </div>
 
+<script src="/ai.js"></script>
 <script>
 const BOARD = 9;
 const PAWN_CLASSES = ["pawn-light", "pawn-dark", "pawn-red", "pawn-teal"];
@@ -464,6 +474,12 @@ let legalWalls = [];
 let isRotated = false;
 let autoRotate = false;
 let shortestPaths = [];
+
+// Computer opponent
+let vsComputer = false;
+let aiSeat = -1;       // which seat the AI plays as
+let aiDepth = 2;       // 1=easy, 2=medium, 3=hard
+let aiThinking = false;
 
 // Online mode
 let onlineMode = false;
@@ -636,8 +652,8 @@ function render() {
     renderWall(board, wr, wc, orient, "wall-placed", cellW, cellH, gapX, gapY);
   }
 
-  // Legal moves
-  if (state.winner === null) {
+  // Legal moves (hide when it's AI's turn or we're thinking)
+  if (state.winner === null && !(vsComputer && (state.current_player === aiSeat || aiThinking))) {
     for (const m of legalMoves) {
       const cell = getCell(m[0], m[1]);
       if (cell) cell.classList.add("legal-move");
@@ -702,13 +718,15 @@ function updateActionBar() {
 // ── Interaction ──
 
 function onCellClick(r, c) {
-  if (!state || state.winner !== null) return;
+  if (!state || state.winner !== null || aiThinking) return;
+  if (vsComputer && state.current_player === aiSeat) return;
   if (!legalMoves.some(m => m[0] === r && m[1] === c)) return;
   sendMove({ type: "move", to: [r, c] });
 }
 
 function onGrooveClick(wr, wc, orient) {
-  if (!state || state.winner !== null) return;
+  if (!state || state.winner !== null || aiThinking) return;
+  if (vsComputer && state.current_player === aiSeat) return;
   if (state.walls_remaining[state.current_player] <= 0) return;
   // Only allow legal wall placements
   if (!legalWalls.some(w => w[0] === wr && w[1] === wc && w[2] === orient)) return;
@@ -762,6 +780,8 @@ async function sendMove(moveData) {
 
   if (state.winner !== null) {
     setTimeout(() => showWinner(), 400);
+  } else {
+    tryAiMove();
   }
 }
 
@@ -785,6 +805,9 @@ async function undoMove() {
 
 async function newGame(np) {
   numPlayers = np || 2;
+  vsComputer = false;
+  aiSeat = -1;
+  aiThinking = false;
   document.getElementById("winner-overlay").classList.remove("show");
 
   buildTopBar();
@@ -836,6 +859,59 @@ function showInfo() {
     container.appendChild(item);
   }
   document.getElementById("info-panel").classList.add("show");
+}
+
+// ── Computer opponent ──
+
+async function tryAiMove() {
+  if (!vsComputer || aiThinking) return;
+  if (!state || state.winner !== null) return;
+  if (state.current_player !== aiSeat) return;
+
+  aiThinking = true;
+  render(); // show no legal moves while AI thinks
+
+  // Run AI in a setTimeout to let the UI update
+  setTimeout(async () => {
+    try {
+      const move = AI.bestMove(state, aiDepth);
+      if (move) {
+        aiThinking = false;
+        await sendMove(move);
+      } else {
+        aiThinking = false;
+        render();
+      }
+    } catch (e) {
+      showError("AI error");
+      aiThinking = false;
+      render();
+    }
+  }, 50);
+}
+
+async function newGameVsComputer(depth) {
+  vsComputer = true;
+  aiSeat = 1;  // AI plays as dark (player 1)
+  aiDepth = depth;
+  numPlayers = 2;
+  onlineMode = false;
+
+  document.getElementById("winner-overlay").classList.remove("show");
+  buildTopBar();
+
+  const json = await apiCall("new");
+  if (json.error) { showError(json.error); return; }
+
+  state = json.state;
+  history = json.history;
+  document.getElementById("board-wrapper").style.transform = "";
+
+  const legalJson = await apiCall("legal");
+  legalMoves = legalJson.pawn_moves || [];
+  legalWalls = legalJson.legal_walls || [];
+  shortestPaths = legalJson.shortest_paths || [];
+  render();
 }
 
 // ── Online multiplayer ──
@@ -984,7 +1060,11 @@ function leaveOnline() {
 
 document.getElementById("btn-undo").addEventListener("click", undoMove);
 document.getElementById("btn-new").addEventListener("click", showInfo);
-document.getElementById("btn-play-again").addEventListener("click", () => newGame(numPlayers));
+document.getElementById("btn-play-again").addEventListener("click", () => {
+  if (vsComputer) newGameVsComputer(aiDepth);
+  else if (onlineMode) createRoom(numPlayers);
+  else newGame(numPlayers);
+});
 document.getElementById("btn-start-2").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
   leaveOnline();
@@ -1002,6 +1082,18 @@ document.getElementById("btn-online-2").addEventListener("click", () => {
 document.getElementById("btn-online-4").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
   createRoom(4);
+});
+document.getElementById("btn-ai-easy").addEventListener("click", () => {
+  document.getElementById("info-panel").classList.remove("show");
+  newGameVsComputer(1);
+});
+document.getElementById("btn-ai-medium").addEventListener("click", () => {
+  document.getElementById("info-panel").classList.remove("show");
+  newGameVsComputer(2);
+});
+document.getElementById("btn-ai-hard").addEventListener("click", () => {
+  document.getElementById("info-panel").classList.remove("show");
+  newGameVsComputer(3);
 });
 document.getElementById("btn-info").addEventListener("click", showInfo);
 document.getElementById("btn-info-close").addEventListener("click", () => {
@@ -1053,6 +1145,11 @@ window.addEventListener("resize", () => {
   buildGrooveZones();
   if (state) render();
 });
+
+// Service worker
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
 </script>
 </body>
 </html>
