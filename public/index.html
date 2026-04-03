@@ -718,6 +718,13 @@ function onGrooveClick(wr, wc, orient) {
 // ── Rotation ──
 
 function applyRotation(player) {
+  // Online mode: always show board from my perspective (my seat at the bottom)
+  if (onlineMode && mySeat != null) {
+    const angle = rotationAngle(mySeat) || 0;
+    document.getElementById("board-wrapper").style.transform = angle ? `rotate(${angle}deg)` : "";
+    return;
+  }
+  // Local mode: rotate per turn if enabled
   if (!autoRotate) {
     document.getElementById("board-wrapper").style.transform = "";
     return;
