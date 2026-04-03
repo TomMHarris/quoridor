@@ -402,6 +402,18 @@
 </div>
 
 <div class="error-flash" id="error-flash"></div>
+
+<!-- Share overlay for online rooms -->
+<div class="winner-overlay" id="share-overlay" style="z-index:250;">
+  <p style="color:var(--text-mid); font-style:italic; margin-bottom:16px;">share this link to play</p>
+  <p id="share-link" style="font-family:'DM Mono',monospace; font-size:0.7rem; color:var(--text); word-break:break-all; margin-bottom:16px; padding:10px 16px; background:var(--board-bg); border:1px solid var(--board-border); border-radius:6px; max-width:340px;"></p>
+  <button id="share-copy-btn" onclick="copyShareLink()" style="font-family:'Cormorant Garamond',Georgia,serif; font-size:1rem; padding:10px 28px; background:var(--board-bg); border:1px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text); margin-bottom:10px;">copy link</button>
+  <br>
+  <button onclick="document.getElementById('share-overlay').classList.remove('show')" style="font-family:'DM Mono',monospace; font-size:0.7rem; padding:8px 16px; background:none; border:none; cursor:pointer; color:var(--text-light);">close</button>
+</div>
+
+<!-- Online status text -->
+<div id="online-status" style="position:fixed; top:10px; left:12px; font-family:'DM Mono',monospace; font-size:0.65rem; color:var(--text-light); z-index:50;"></div>
 <button class="info-btn" id="btn-info">i</button>
 
 <div class="info-panel" id="info-panel">
@@ -411,10 +423,15 @@
     <p>Walls block movement but every player must always have a path to their goal.</p>
     <div class="info-paths" id="info-paths"></div>
     <div style="margin: 16px 0 8px; display: flex; justify-content: center; gap: 10px;">
-      <button id="btn-start-2" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 2 player</button>
-      <button id="btn-start-4" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 4 player</button>
+      <button id="btn-start-2" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 2p local</button>
+      <button id="btn-start-4" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 4p local</button>
     </div>
-    <button id="btn-info-close">close</button>
+    <p style="font-size:0.85rem; color:var(--text-light); margin:12px 0 8px; font-style:italic;">play online</p>
+    <div style="display: flex; justify-content: center; gap: 10px;">
+      <button id="btn-online-2" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">2p online</button>
+      <button id="btn-online-4" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">4p online</button>
+    </div>
+    <button id="btn-info-close" style="margin-top:16px;">close</button>
   </div>
 </div>
 
@@ -443,10 +460,24 @@ function rotationAngle(p) { return numPlayers === 4 ? ROTATION_4P[p] : ROTATION_
 let state = null;
 let history = [];
 let legalMoves = [];
-let legalWalls = [];    // [[wr, wc, orient], ...]
+let legalWalls = [];
 let isRotated = false;
 let autoRotate = false;
 let shortestPaths = [];
+
+// Online mode
+let onlineMode = false;
+let roomId = null;
+let mySeat = null;
+let playerToken = null;
+let pollTimer = null;
+let lastMoveCount = -1;
+
+function getPlayerToken() {
+  let t = localStorage.getItem("quoridor_token");
+  if (!t) { t = crypto.randomUUID(); localStorage.setItem("quoridor_token", t); }
+  return t;
+}
 
 // ── API ──
 
@@ -456,6 +487,19 @@ async function apiCall(action, extra = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, history, num_players: numPlayers, ...extra }),
+    });
+    return await res.json();
+  } catch (e) {
+    return { error: "connection error" };
+  }
+}
+
+async function roomApiCall(action, extra = {}) {
+  try {
+    const res = await fetch("/api/room", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, player_token: playerToken, room_id: roomId, ...extra }),
     });
     return await res.json();
   } catch (e) {
@@ -651,6 +695,8 @@ function updateWallPips() {
 
 function updateActionBar() {
   document.getElementById("btn-undo").disabled = !state || state.move_count === 0;
+  document.getElementById("btn-undo").style.display = onlineMode ? "none" : "";
+  document.getElementById("btn-rotate").style.display = onlineMode ? "none" : "";
 }
 
 // ── Interaction ──
@@ -683,16 +729,21 @@ function applyRotation(player) {
 // ── API actions ──
 
 async function sendMove(moveData) {
+  if (onlineMode) {
+    const json = await roomApiCall("move", { move: moveData });
+    if (json.error) { showError(json.error); return; }
+    applyRoomState(json);
+    return;
+  }
+
   const json = await apiCall("move", { move: moveData });
   if (json.error) {
     showError(json.error);
-    if (moveData.type === "wall") { wallGhost = null; render(); }
     return;
   }
 
   state = json.state;
   history = json.history;
-
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
@@ -780,6 +831,148 @@ function showInfo() {
   document.getElementById("info-panel").classList.add("show");
 }
 
+// ── Online multiplayer ──
+
+function applyRoomState(json) {
+  state = json.state;
+  history = json.history || history;
+  lastMoveCount = json.move_count != null ? json.move_count : lastMoveCount;
+
+  const legal = json.legal || {};
+  legalMoves = legal.pawn_moves || [];
+  legalWalls = legal.legal_walls || [];
+  shortestPaths = legal.shortest_paths || [];
+
+  applyRotation(state.current_player);
+  render();
+  updateOnlineStatus();
+
+  if (state.winner !== null) {
+    stopPolling();
+    setTimeout(() => showWinner(), 400);
+  }
+}
+
+function updateOnlineStatus() {
+  const el = document.getElementById("online-status");
+  if (!el || !onlineMode) return;
+  if (!state) { el.textContent = ""; return; }
+  if (state.winner !== null) { el.textContent = ""; return; }
+  el.textContent = state.current_player === mySeat ? "your turn" : "waiting...";
+}
+
+async function createRoom(np) {
+  playerToken = getPlayerToken();
+  numPlayers = np;
+  const json = await roomApiCall("create", { num_players: np });
+  if (json.error) {
+    if (json.error === "online_not_configured") showError("online not available");
+    else showError(json.error);
+    return;
+  }
+
+  roomId = json.room_id;
+  mySeat = json.seat;
+  onlineMode = true;
+  numPlayers = json.num_players;
+
+  // Update URL
+  const url = new URL(window.location);
+  url.searchParams.set("room", roomId);
+  window.history.replaceState({}, "", url);
+
+  buildTopBar();
+  applyRoomState(json);
+  showShareOverlay();
+  startPolling();
+}
+
+async function joinRoom(id) {
+  playerToken = getPlayerToken();
+  roomId = id;
+  const json = await roomApiCall("join");
+  if (json.error) {
+    if (json.error === "room_not_found") showError("room not found");
+    else if (json.error === "online_not_configured") showError("online not available");
+    else showError(json.error);
+    // Fall back to local
+    newGame(2);
+    return;
+  }
+
+  mySeat = json.seat;
+  onlineMode = true;
+  numPlayers = json.num_players;
+  lastMoveCount = json.move_count || 0;
+
+  buildTopBar();
+  applyRoomState(json);
+
+  if (json.status === "waiting") {
+    showShareOverlay();
+  }
+
+  startPolling();
+}
+
+function showShareOverlay() {
+  const link = window.location.href;
+  document.getElementById("share-link").textContent = link;
+  document.getElementById("share-overlay").classList.add("show");
+}
+
+async function copyShareLink() {
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    document.getElementById("share-copy-btn").textContent = "copied!";
+    setTimeout(() => { document.getElementById("share-copy-btn").textContent = "copy link"; }, 1500);
+  } catch (e) {
+    // Fallback: select the text
+    const el = document.getElementById("share-link");
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+  }
+}
+
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(pollRoom, 1500);
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+async function pollRoom() {
+  if (!onlineMode || !roomId) return;
+  const json = await roomApiCall("poll", { last_move_count: lastMoveCount });
+  if (json.error) return;
+
+  // Hide share overlay when game starts
+  if (json.status === "playing") {
+    document.getElementById("share-overlay").classList.remove("show");
+  }
+
+  if (json.changed) {
+    applyRoomState(json);
+  }
+}
+
+function leaveOnline() {
+  stopPolling();
+  onlineMode = false;
+  roomId = null;
+  mySeat = null;
+  const url = new URL(window.location);
+  url.searchParams.delete("room");
+  window.history.replaceState({}, "", url);
+  document.getElementById("share-overlay").classList.remove("show");
+  const statusEl = document.getElementById("online-status");
+  if (statusEl) statusEl.textContent = "";
+}
+
 // ── Button handlers ──
 
 document.getElementById("btn-undo").addEventListener("click", undoMove);
@@ -787,11 +980,21 @@ document.getElementById("btn-new").addEventListener("click", showInfo);
 document.getElementById("btn-play-again").addEventListener("click", () => newGame(numPlayers));
 document.getElementById("btn-start-2").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
+  leaveOnline();
   newGame(2);
 });
 document.getElementById("btn-start-4").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
+  leaveOnline();
   newGame(4);
+});
+document.getElementById("btn-online-2").addEventListener("click", () => {
+  document.getElementById("info-panel").classList.remove("show");
+  createRoom(2);
+});
+document.getElementById("btn-online-4").addEventListener("click", () => {
+  document.getElementById("info-panel").classList.remove("show");
+  createRoom(4);
 });
 document.getElementById("btn-info").addEventListener("click", showInfo);
 document.getElementById("btn-info-close").addEventListener("click", () => {
@@ -828,7 +1031,14 @@ updateWallPips();
 
 setTimeout(() => {
   buildGrooveZones();
-  newGame(2);
+  // Check URL for room parameter
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlRoom = urlParams.get("room");
+  if (urlRoom) {
+    joinRoom(urlRoom);
+  } else {
+    newGame(2);
+  }
 }, 50);
 
 window.addEventListener("resize", () => {
