@@ -1,20 +1,22 @@
-# Virtual environment (this is where torch etc live — 2GB+, never commit)
-venv/
-
-# Cython build artifacts
-build/
-*.so
-*.c
-*.egg-info/
-
 # Python
+venv/
 __pycache__/
 *.pyc
 *.pyo
+build/
+*.egg-info/
 
-# Training outputs (large, regenerable)
+# Cython (not needed for web app)
+*.so
+*.so.bak
+engine_fast.c
+engine_fast.pyx
+
+# Training / ML (legacy, not used by web app)
 checkpoints/
 logs/
+*.pt
+*.pth
 
 # macOS
 .DS_Store
@@ -23,8 +25,9 @@ logs/
 .vscode/
 .idea/
 
-# Misc
+# Legacy files
 progression.png
+training_panel.png
 gitignore
 .gitattributes
-LICENSE
+setup.py
