@@ -202,6 +202,22 @@
   }
   .groove-zone:hover, .groove-zone:active { background: var(--groove-hover); }
 
+  .wall-ghost {
+    position: absolute;
+    background: var(--wall);
+    border: 1px solid var(--wall-edge);
+    border-radius: 3px;
+    z-index: 9;
+    opacity: 0.45;
+    pointer-events: none;
+    animation: ghost-pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes ghost-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 0.65; }
+  }
+
   .wall-placed {
     position: absolute;
     background: var(--wall);
@@ -392,6 +408,8 @@
 </div>
 
 <div class="action-bar" id="action-bar">
+  <button class="action-btn" id="btn-wall-confirm" style="display:none; background:var(--wall); color:white; border-color:var(--wall-edge);">place wall</button>
+  <button class="action-btn" id="btn-wall-cancel" style="display:none; color:var(--accent); border-color:var(--accent);">cancel</button>
   <button class="action-btn" id="btn-undo">undo</button>
   <button class="action-btn" id="btn-new">new game</button>
   <button class="action-btn" id="btn-rotate">rotate: off</button>
@@ -471,6 +489,7 @@ let state = null;
 let history = [];
 let legalMoves = [];
 let legalWalls = [];
+let wallGhost = null;  // {wr, wc, orient} — confirmation preview for online mode
 let isRotated = false;
 let autoRotate = false;
 let shortestPaths = [];
@@ -652,8 +671,13 @@ function render() {
     renderWall(board, wr, wc, orient, "wall-placed", cellW, cellH, gapX, gapY);
   }
 
-  // Legal moves (hide when it's AI's turn or we're thinking)
-  if (state.winner === null && !(vsComputer && (state.current_player === aiSeat || aiThinking))) {
+  // Ghost wall preview (online confirmation)
+  if (wallGhost) {
+    renderWall(board, wallGhost.wr, wallGhost.wc, wallGhost.orient, "wall-ghost", cellW, cellH, gapX, gapY);
+  }
+
+  // Legal moves (hide when ghost active, AI's turn, or thinking)
+  if (state.winner === null && !wallGhost && !(vsComputer && (state.current_player === aiSeat || aiThinking))) {
     for (const m of legalMoves) {
       const cell = getCell(m[0], m[1]);
       if (cell) cell.classList.add("legal-move");
@@ -710,9 +734,13 @@ function updateWallPips() {
 }
 
 function updateActionBar() {
+  const hasGhost = wallGhost !== null;
+  document.getElementById("btn-wall-confirm").style.display = hasGhost ? "" : "none";
+  document.getElementById("btn-wall-cancel").style.display = hasGhost ? "" : "none";
+  document.getElementById("btn-undo").style.display = hasGhost || onlineMode ? "none" : "";
   document.getElementById("btn-undo").disabled = !state || state.move_count === 0;
-  document.getElementById("btn-undo").style.display = onlineMode ? "none" : "";
-  document.getElementById("btn-rotate").style.display = onlineMode ? "none" : "";
+  document.getElementById("btn-new").style.display = hasGhost ? "none" : "";
+  document.getElementById("btn-rotate").style.display = hasGhost || onlineMode ? "none" : "";
 }
 
 // ── Interaction ──
@@ -720,6 +748,7 @@ function updateActionBar() {
 function onCellClick(r, c) {
   if (!state || state.winner !== null || aiThinking) return;
   if (vsComputer && state.current_player === aiSeat) return;
+  if (wallGhost) { wallGhost = null; render(); return; }
   if (!legalMoves.some(m => m[0] === r && m[1] === c)) return;
   sendMove({ type: "move", to: [r, c] });
 }
@@ -727,10 +756,33 @@ function onCellClick(r, c) {
 function onGrooveClick(wr, wc, orient) {
   if (!state || state.winner !== null || aiThinking) return;
   if (vsComputer && state.current_player === aiSeat) return;
+  if (onlineMode && state.current_player !== mySeat) return;
   if (state.walls_remaining[state.current_player] <= 0) return;
-  // Only allow legal wall placements
   if (!legalWalls.some(w => w[0] === wr && w[1] === wc && w[2] === orient)) return;
-  sendMove({ type: "wall", pos: [wr, wc], orient });
+
+  if (onlineMode) {
+    // Online: show ghost for confirmation, or confirm if tapping same spot
+    if (wallGhost && wallGhost.wr === wr && wallGhost.wc === wc && wallGhost.orient === orient) {
+      confirmWall();
+    } else {
+      wallGhost = { wr, wc, orient };
+      render();
+    }
+  } else {
+    sendMove({ type: "wall", pos: [wr, wc], orient });
+  }
+}
+
+function confirmWall() {
+  if (!wallGhost) return;
+  const move = { type: "wall", pos: [wallGhost.wr, wallGhost.wc], orient: wallGhost.orient };
+  wallGhost = null;
+  sendMove(move);
+}
+
+function cancelWall() {
+  wallGhost = null;
+  render();
 }
 
 // ── Rotation ──
@@ -917,6 +969,7 @@ async function newGameVsComputer(depth) {
 // ── Online multiplayer ──
 
 function applyRoomState(json) {
+  wallGhost = null;
   state = json.state;
   history = json.history || history;
   lastMoveCount = json.move_count != null ? json.move_count : lastMoveCount;
@@ -1058,6 +1111,8 @@ function leaveOnline() {
 
 // ── Button handlers ──
 
+document.getElementById("btn-wall-confirm").addEventListener("click", confirmWall);
+document.getElementById("btn-wall-cancel").addEventListener("click", cancelWall);
 document.getElementById("btn-undo").addEventListener("click", undoMove);
 document.getElementById("btn-new").addEventListener("click", showInfo);
 document.getElementById("btn-play-again").addEventListener("click", () => {
