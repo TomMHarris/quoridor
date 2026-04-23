@@ -406,8 +406,91 @@
   }
   .info-content button:active { background: var(--groove); }
 
-  .pawn-choice { opacity: 0.45; transition: opacity 0.15s; }
-  .pawn-choice.active { opacity: 1; border-color: var(--wall) !important; }
+  /* ── Streamlined new-game grid ── */
+  .new-game-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 10px 14px;
+    align-items: center;
+    margin: 20px 0 12px;
+    text-align: left;
+  }
+  .row-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--text-light);
+    text-align: right;
+  }
+  .row-buttons {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .info-content button.game-btn {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    padding: 8px 14px;
+    background: var(--board-bg);
+    border: 1.5px solid var(--board-border);
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-mid);
+    transition: all 0.15s;
+    margin-top: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .info-content button.game-btn:hover { border-color: var(--wall); color: var(--text); }
+  .info-content button.game-btn:active { background: var(--groove); }
+
+  .pawn-toggle {
+    display: inline-flex;
+    gap: 2px;
+    border-left: 1px solid var(--board-border);
+    padding-left: 8px;
+  }
+  .info-content button.pawn-choice {
+    padding: 4px;
+    background: transparent;
+    border: 1.5px solid transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    opacity: 0.4;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 0;
+    font-size: 1rem;
+  }
+  .info-content button.pawn-choice.active { opacity: 1; border-color: var(--wall); }
+  .pawn-choice .player-dot { width: 14px; height: 14px; }
+
+  .info-footer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--board-border);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+  }
+  .info-footer a, .info-content .info-footer button {
+    color: var(--text-light);
+    text-decoration: none;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    margin-top: 0;
+  }
+  .info-footer a:hover, .info-content .info-footer button:hover { color: var(--text); }
+  .info-footer .sep { color: var(--board-border); }
+  .info-footer #btn-theme { font-size: 1rem; }
 
   @media (min-width: 768px) {
     .action-btn { font-size: 0.8rem; padding: 12px 18px; min-height: 48px; }
@@ -458,40 +541,43 @@
 <div class="info-panel" id="info-panel">
   <div class="info-content">
     <h2>quoridor</h2>
-    <p>Move your pawn to the opposite side of the board. Tap a cell to move, tap a groove to place a wall.</p>
-    <p>Walls block movement but every player must always have a path to their goal.</p>
+    <p style="font-size:0.9rem;">Move your pawn to the opposite side. Tap a cell to move, tap a groove to place a wall. Every player must always have a path to their goal.</p>
     <div class="info-paths" id="info-paths"></div>
-    <div style="margin: 16px 0 8px; display: flex; justify-content: center; gap: 10px;">
-      <button id="btn-start-2" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 2p local</button>
-      <button id="btn-start-4" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 4p local</button>
+
+    <div class="new-game-grid">
+      <span class="row-label">local</span>
+      <div class="row-buttons">
+        <button id="btn-start-2" class="game-btn">2p</button>
+        <button id="btn-start-4" class="game-btn">4p</button>
+      </div>
+
+      <span class="row-label">vs ai</span>
+      <div class="row-buttons">
+        <button id="btn-ai-easy" class="game-btn">easy</button>
+        <button id="btn-ai-medium" class="game-btn">medium</button>
+        <button id="btn-ai-hard" class="game-btn">hard</button>
+        <span class="pawn-toggle" style="margin-left:6px;">
+          <button id="btn-ai-as-light" class="pawn-choice active" title="play as light" data-seat="0"><span class="player-dot light"></span></button>
+          <button id="btn-ai-as-dark" class="pawn-choice" title="play as dark" data-seat="1"><span class="player-dot dark"></span></button>
+        </span>
+      </div>
+
+      <span class="row-label">online</span>
+      <div class="row-buttons">
+        <button id="btn-online-2" class="game-btn">2p</button>
+        <button id="btn-online-4" class="game-btn">4p</button>
+      </div>
     </div>
-    <p style="font-size:0.85rem; color:var(--text-light); margin:12px 0 8px; font-style:italic;">vs computer</p>
-    <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-bottom: 8px; font-family:'DM Mono',monospace; font-size:0.7rem; color:var(--text-light);">
-      <span>play as</span>
-      <button id="btn-ai-as-light" class="pawn-choice active" data-seat="0" style="font-family:'DM Mono',monospace; font-size:0.7rem; padding:6px 10px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
-        <span class="player-dot light" style="width:14px; height:14px;"></span> light
-      </button>
-      <button id="btn-ai-as-dark" class="pawn-choice" data-seat="1" style="font-family:'DM Mono',monospace; font-size:0.7rem; padding:6px 10px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
-        <span class="player-dot dark" style="width:14px; height:14px;"></span> dark
-      </button>
-    </div>
-    <div style="display: flex; justify-content: center; gap: 10px;">
-      <button id="btn-ai-easy" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">easy</button>
-      <button id="btn-ai-medium" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">medium</button>
-      <button id="btn-ai-hard" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">hard</button>
-    </div>
-    <p style="font-size:0.85rem; color:var(--text-light); margin:12px 0 8px; font-style:italic;">play online</p>
-    <div style="display: flex; justify-content: center; gap: 10px;">
-      <button id="btn-online-2" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">2p online</button>
-      <button id="btn-online-4" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">4p online</button>
-    </div>
-    <div style="margin-top:16px; display:flex; gap:10px; justify-content:center; align-items:center;">
+
+    <div class="info-footer">
+      <a href="/how-it-thinks.html">how it thinks</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/TomMHarris/quoridor" target="_blank">github</a>
+      <span class="sep">·</span>
+      <button id="btn-theme" title="Toggle dark mode">◐</button>
+      <span class="sep">·</span>
       <button id="btn-info-close">close</button>
-      <button id="btn-theme" title="Toggle dark mode" style="font-family:'DM Mono',monospace; font-size:0.7rem; padding:8px 14px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">◐ theme</button>
     </div>
-    <p style="margin-top:20px; font-family:'DM Mono',monospace; font-size:0.65rem; color:var(--text-light);">
-      <a href="https://github.com/TomMHarris/quoridor" target="_blank" style="color:var(--text-light); text-decoration:none;">github</a>
-    </p>
   </div>
 </div>
 
@@ -1210,6 +1296,12 @@ document.getElementById("btn-ai-hard").addEventListener("click", () => {
 document.getElementById("btn-info").addEventListener("click", showInfo);
 document.getElementById("btn-info-close").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
+});
+// Click outside the info card closes the panel
+document.getElementById("info-panel").addEventListener("click", (e) => {
+  if (e.target.id === "info-panel") {
+    e.target.classList.remove("show");
+  }
 });
 
 // Theme toggle (light/dark)

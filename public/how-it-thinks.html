@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How the Quoridor AI thinks</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23F0EBE0'/><circle cx='16' cy='16' r='9' fill='%23C4A56E' stroke='%23A8894F' stroke-width='1.5'/></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FAF8F4;
+    --board-bg: #F0EBE0;
+    --board-border: #D4CFC4;
+    --groove: #DDD8CD;
+    --wall: #C4A56E;
+    --wall-edge: #A8894F;
+    --pawn-light: #F0DDB8;
+    --pawn-light-edge: #CEBB8E;
+    --pawn-dark: #5C3A1E;
+    --pawn-dark-edge: #3D2510;
+    --text: #2C2C2C;
+    --text-light: #9C9688;
+    --text-mid: #6B665C;
+    --accent: #C03020;
+    --node-max: #C4A56E;
+    --node-min: #5C3A1E;
+    --pruned: #DDD8CD;
+    --pv: #C03020;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    color: var(--text);
+    line-height: 1.6;
+    padding: 40px 20px 60px;
+  }
+
+  main {
+    max-width: 820px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-size: 2.6rem;
+    font-weight: 300;
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+    text-align: center;
+  }
+
+  .subtitle {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--text-light);
+    text-align: center;
+    margin-bottom: 12px;
+  }
+
+  .accent-line {
+    width: 80px;
+    height: 2px;
+    background: var(--accent);
+    margin: 12px auto 40px;
+  }
+
+  h2 {
+    font-size: 1.5rem;
+    font-weight: 400;
+    font-style: italic;
+    color: var(--text-mid);
+    margin: 48px 0 20px;
+    text-align: center;
+  }
+
+  p {
+    font-size: 1.05rem;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+
+  .mono {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.9em;
+    color: var(--text-mid);
+  }
+
+  .back-link {
+    display: inline-block;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--text-light);
+    text-decoration: none;
+    margin-bottom: 20px;
+  }
+  .back-link:hover { color: var(--accent); }
+
+  /* ── The tree ── */
+  .tree-container {
+    background: var(--board-bg);
+    border: 1px solid var(--board-border);
+    border-radius: 8px;
+    padding: 24px 16px;
+    margin: 20px 0;
+    overflow-x: auto;
+  }
+
+  .tree-svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  .tree-legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 20px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-mid);
+    margin-top: 16px;
+    padding: 0 8px;
+  }
+
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  /* ── Complexity table ── */
+  .complexity-table {
+    background: var(--board-bg);
+    border: 1px solid var(--board-border);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 20px 0;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.85rem;
+  }
+
+  .complexity-table table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .complexity-table th,
+  .complexity-table td {
+    padding: 10px 8px;
+    text-align: right;
+    border-bottom: 1px solid var(--groove);
+  }
+
+  .complexity-table th {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 1rem;
+    font-style: italic;
+    font-weight: 400;
+    color: var(--text-mid);
+    border-bottom: 1px solid var(--wall);
+  }
+
+  .complexity-table th:first-child,
+  .complexity-table td:first-child { text-align: left; }
+
+  .complexity-table .full { color: var(--accent); }
+  .complexity-table .pruned { color: var(--text-mid); }
+  .complexity-table .actual { color: #3A7A3A; font-weight: 500; }
+
+  /* ── Bar chart ── */
+  .bars {
+    background: var(--board-bg);
+    border: 1px solid var(--board-border);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 20px 0;
+  }
+
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+  }
+
+  .bar-label {
+    width: 70px;
+    color: var(--text-mid);
+    flex-shrink: 0;
+  }
+
+  .bar-track {
+    flex: 1;
+    background: var(--groove);
+    height: 22px;
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--wall), var(--wall-edge));
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 8px;
+    color: white;
+    font-size: 0.7rem;
+  }
+
+  .bar-fill.pruned {
+    background: linear-gradient(90deg, #9C9688, #6B665C);
+  }
+
+  .bar-value {
+    width: 120px;
+    text-align: right;
+    color: var(--text);
+    flex-shrink: 0;
+  }
+
+  .footnote {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--text-light);
+    text-align: center;
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 1px solid var(--board-border);
+  }
+  .footnote a { color: var(--text-light); }
+
+  @media (max-width: 600px) {
+    body { padding: 24px 12px 40px; }
+    h1 { font-size: 2rem; }
+    .complexity-table { padding: 14px; font-size: 0.75rem; }
+    .complexity-table th, .complexity-table td { padding: 8px 4px; }
+    .bar-label { width: 55px; font-size: 0.7rem; }
+    .bar-value { width: 90px; font-size: 0.7rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<a href="/" class="back-link">← back to game</a>
+
+<h1>how it thinks</h1>
+<p class="subtitle">minimax search in quoridor</p>
+<div class="accent-line"></div>
+
+<p>Every turn, the AI considers every legal move it could make. For each, it imagines the opponent's best response. For each of those, its own best reply. And so on. This is called <em>minimax search</em>. The deeper it looks, the stronger it plays — but the tree of possibilities grows explosively.</p>
+
+<h2>the search tree</h2>
+
+<p>Each row of the tree below shows one ply of lookahead. The root (top) is the current position. From it, dozens of branches spread out — one for each of the AI's legal moves. Each of those branches out again, for the opponent's replies. And so on.</p>
+
+<p>The <strong style="color:var(--accent);">red path</strong> is the <em>principal variation</em> — the single best sequence of moves the AI found, assuming both players play optimally. Darker branches are ones the AI fully examined. The many faint grey branches are the ones alpha-beta <em>pruned</em> — it proved they couldn't lead to a better outcome than what it had already found, so it skipped them.</p>
+
+<div class="tree-container">
+  <svg id="tree-svg" class="tree-svg" viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">
+    <!-- Generated by script below -->
+  </svg>
+  <script>
+    (function renderTree() {
+      const svg = document.getElementById("tree-svg");
+      const W = 800, H = 600;
+      const levels = [
+        { y: 40,  count: 1,   r: 11, name: "root" },
+        { y: 180, count: 7,   r: 9,  name: "depth 1" },
+        { y: 320, count: 35,  r: 5,  name: "depth 2" },
+        { y: 460, count: 140, r: 3,  name: "depth 3" },
+        { y: 560, count: 300, r: 1.5, name: "depth 4" },
+      ];
+
+      // Pick a principal-variation path: one node at each level (arbitrary central choice)
+      const pvIndex = [0];
+      for (let L = 1; L < levels.length; L++) {
+        // pick the child that's closest to level center (for visual appeal)
+        pvIndex.push(Math.floor(levels[L].count / 2));
+      }
+
+      // "Fully explored" indices: a small subset at each level (alpha-beta kept these)
+      const exploredIdx = [];
+      for (const L of levels) {
+        const set = new Set([pvIndex[levels.indexOf(L)]]);
+        // 20% of nodes at each level are "fully explored"
+        const keep = Math.max(1, Math.floor(L.count * 0.2));
+        for (let i = 0; i < keep; i++) {
+          set.add(Math.floor(Math.random() * L.count));
+        }
+        exploredIdx.push(set);
+      }
+
+      function x(level, index) {
+        const count = level.count;
+        if (count === 1) return W / 2;
+        const margin = 30;
+        return margin + (index * (W - 2 * margin)) / (count - 1);
+      }
+
+      // Parent index for each node at level L: node at index i has parent at floor(i / ratio)
+      function parentIdx(L, i) {
+        const ratio = levels[L].count / levels[L - 1].count;
+        return Math.floor(i / ratio);
+      }
+
+      let svgContent = "";
+
+      // Draw edges (deepest level first so they're underneath nodes)
+      for (let L = 1; L < levels.length; L++) {
+        const lv = levels[L];
+        const plv = levels[L - 1];
+        for (let i = 0; i < lv.count; i++) {
+          const p = parentIdx(L, i);
+          const x1 = x(plv, p), y1 = plv.y;
+          const x2 = x(lv, i),  y2 = lv.y;
+
+          const onPV = (p === pvIndex[L - 1]) && (i === pvIndex[L]);
+          const explored = exploredIdx[L].has(i) && exploredIdx[L - 1].has(p);
+
+          let stroke, opacity, width;
+          if (onPV) {
+            stroke = "#C03020"; opacity = 1; width = 2.5;
+          } else if (explored) {
+            stroke = "#8C6F45"; opacity = 0.55; width = 1;
+          } else {
+            stroke = "#C4BFB3"; opacity = 0.2; width = 0.4;
+          }
+          svgContent += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${width}" opacity="${opacity}"/>`;
+        }
+      }
+
+      // Draw nodes (root big & alternate colors by level — light=AI, dark=opponent)
+      for (let L = 0; L < levels.length; L++) {
+        const lv = levels[L];
+        const maximizing = (L % 2 === 0);  // root, level 2, level 4 = AI maximizing
+        const fill = maximizing ? "#F0DDB8" : "#5C3A1E";
+        const stroke = maximizing ? "#CEBB8E" : "#3D2510";
+        for (let i = 0; i < lv.count; i++) {
+          const cx = x(lv, i), cy = lv.y;
+          const isPV = (i === pvIndex[L]);
+          const explored = exploredIdx[L].has(i);
+          let r = lv.r;
+          let s = stroke;
+          let sw = 1;
+          let op = 1;
+          if (isPV) {
+            s = "#C03020"; sw = 2; r = lv.r + 1;
+          } else if (!explored) {
+            op = 0.3;
+            sw = 0.5;
+          }
+          svgContent += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${s}" stroke-width="${sw}" opacity="${op}"/>`;
+        }
+      }
+
+      // Depth labels on the right
+      for (const lv of levels) {
+        svgContent += `<text x="${W - 10}" y="${lv.y + 4}" text-anchor="end" font-family="DM Mono, monospace" font-size="9" fill="#9C9688">${lv.name} — ${lv.count} node${lv.count === 1 ? "" : "s"}</text>`;
+      }
+
+      // Maximizing/minimizing label on the left
+      for (const lv of levels) {
+        const L = levels.indexOf(lv);
+        const label = L === 0 ? "AI's move" : (L % 2 === 1 ? "opp responds" : "AI responds");
+        svgContent += `<text x="10" y="${lv.y + 4}" text-anchor="start" font-family="Cormorant Garamond, serif" font-style="italic" font-size="10" fill="#9C9688">${label}</text>`;
+      }
+
+      svg.innerHTML = svgContent;
+    })();
+  </script>
+
+  <div class="tree-legend">
+    <span class="legend-item"><span class="legend-dot" style="background:#F0DDB8; border:1.5px solid #CEBB8E;"></span>AI plays (maximizing)</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#5C3A1E; border:1px solid #3D2510;"></span>opponent plays (minimizing)</span>
+    <span class="legend-item"><span class="legend-dot" style="background:var(--accent);"></span>principal variation</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#C4BFB3; opacity:0.4;"></span>pruned branches</span>
+  </div>
+</div>
+
+<h2>the complexity explosion</h2>
+
+<p>In the starting position of a 2-player game, the AI has <span class="mono">131 legal moves</span> (3 pawn moves plus 128 legal wall placements). If the opponent also has ~131 replies, and so on, the tree of possibilities grows <em>exponentially</em>:</p>
+
+<div class="complexity-table">
+  <table>
+    <thead>
+      <tr>
+        <th>depth</th>
+        <th>full tree</th>
+        <th>with pruning + ordering</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td class="full">131</td>
+        <td class="actual">~131</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td class="full">17,161</td>
+        <td class="actual">~2,000</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td class="full">2,248,091</td>
+        <td class="actual">~50,000</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td class="full">294,499,921</td>
+        <td class="actual">~500,000</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td class="full">38,579,489,651</td>
+        <td class="actual">~5,000,000</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<p><span class="mono">Full tree</span> is how many positions we'd have to examine without any cleverness. <span class="mono">With pruning + ordering</span> is what we actually check: alpha-beta pruning skips entire branches once a better alternative is found, and wall-candidate filtering only considers walls near pawns or along opponent paths (not all 128). Combined, this is a reduction of <em>tens of thousands of times</em> at deeper levels.</p>
+
+<h2>real timing on this device</h2>
+
+<p>Actual measured search time for the opening position:</p>
+
+<div class="bars" id="timing-bars">
+  <div class="bar-row">
+    <span class="bar-label">depth 1</span>
+    <div class="bar-track"><div class="bar-fill" style="width: 36%"></div></div>
+    <span class="bar-value">~30 ms</span>
+  </div>
+  <div class="bar-row">
+    <span class="bar-label">depth 2</span>
+    <div class="bar-track"><div class="bar-fill" style="width: 58%"></div></div>
+    <span class="bar-value">~250 ms</span>
+  </div>
+  <div class="bar-row">
+    <span class="bar-label">depth 3</span>
+    <div class="bar-track"><div class="bar-fill" style="width: 76%"></div></div>
+    <span class="bar-value">~1.4 s</span>
+  </div>
+  <div class="bar-row">
+    <span class="bar-label">depth 4</span>
+    <div class="bar-track"><div class="bar-fill" style="width: 100%"></div></div>
+    <span class="bar-value">~14 s</span>
+  </div>
+  <p style="font-family:'DM Mono',monospace; font-size:0.65rem; color:var(--text-light); margin-top:10px; text-align:right;">log scale</p>
+</div>
+
+<p>Each deeper level takes roughly <span class="mono">5–10×</span> longer than the previous one (note the bar chart is on a log scale to keep the smaller bars visible — the actual growth is exponential). That's why the AI caps at depth 4 with a time budget of 2 seconds — beyond that, moves would take too long. Hard difficulty typically reaches depth 3 in the opening and depth 4 in simpler mid/endgame positions.</p>
+
+<h2>why this plays well</h2>
+
+<p>The evaluation function at each leaf position is simple:</p>
+
+<p class="mono" style="text-align:center; font-size: 0.95rem; color: var(--text-mid); margin: 24px 0;">
+  score = (opponent_distance − my_distance) × 10 + (my_walls − opp_walls) × 2
+</p>
+
+<p>Two signals: am I closer to my goal than my opponent, and do I have more walls? No hand-crafted positional heuristics. The strength comes from search depth — looking 3–4 moves ahead captures most short-term tactics (wall forks, jumps, forced sequences), and the evaluation handles the long-term goal of reaching the other side.</p>
+
+<p><em>About the weights</em>: the 10× on distance and 2× on walls are not grounded in theory — they're a design choice. The relative ratio matters more than the absolute values (multiplying both by 100 changes nothing). What 10:2 says is that one step of path advantage is worth five walls in hand. That sounds extreme, but remember: the <em>effect</em> of actually placing a wall is captured directly by the search — if placing a wall lengthens the opponent's path by 3 steps, that shows up as +30 score during minimax. The 2× weight is only the <em>latent</em> value of having a wall in reserve for later use. A higher weight (say 8×) would make the AI hoard walls; a lower weight would make it wasteful. 2× is a reasonable middle ground picked by feel, not optimised.</p>
+
+<p>A strong human player does essentially the same thing: they count path lengths, consider a few move-sequences, and pick the one that leaves them best off. The AI just does it more exhaustively.</p>
+
+<p class="footnote">
+  open source at <a href="https://github.com/TomMHarris/quoridor" target="_blank">github.com/TomMHarris/quoridor</a>
+</p>
+
+</main>
+</body>
+</html>

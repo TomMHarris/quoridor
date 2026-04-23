@@ -1,8 +1,9 @@
-const CACHE_NAME = "quoridor-v1";
+const CACHE_NAME = "quoridor-v2";
 const ASSETS = [
   "/",
   "/index.html",
   "/ai.js",
+  "/how-it-thinks.html",
   "/manifest.json",
   "/icon-192.png",
   "/icon-512.png",

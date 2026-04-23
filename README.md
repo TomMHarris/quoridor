@@ -28,16 +28,33 @@ python3 app.py
 # Open http://localhost:5000
 ```
 
+Online rooms use an in-memory store locally (state is lost on server restart). For persistent rooms, set `REDIS_URL`.
+
+## Deploying to Vercel
+
+Push to GitHub and import the repo into Vercel — static files in `public/` and Python serverless functions in `api/` are auto-detected via `vercel.json`.
+
+For online multiplayer, add a Redis database (any Redis-compatible provider works — Upstash, Redis Cloud, etc.) and set the `REDIS_URL` environment variable in your Vercel project settings.
+
 ## Architecture
 
 ```
-public/          Frontend (HTML, JS, PWA assets)
-  index.html     Main app
-  ai.js          Client-side minimax AI
-api/             Vercel serverless functions
-  game.py        Local game API (stateless)
-  room.py        Online room management
-  kv.py          Redis wrapper
-engine.py        Quoridor game engine
-app.py           Flask dev server
+public/              Frontend (HTML, JS, PWA assets)
+  index.html         Main app
+  ai.js              Client-side minimax AI
+  how-it-thinks.html Explainer page for the AI
+api/                 Vercel serverless functions
+  game.py            Local game API (stateless — sends history per call)
+  room.py            Online room management (Redis-backed)
+  kv.py              Redis wrapper
+engine.py            Quoridor game engine (rules, BFS pathfinding)
+app.py               Flask dev server (same API as Vercel functions)
 ```
+
+## How the AI works
+
+See [the live explainer page](https://quoridor-delta.vercel.app/how-it-thinks.html) for a visual walkthrough of the minimax search, complexity growth, and evaluation function.
+
+## License
+
+MIT

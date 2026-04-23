@@ -31,3 +31,13 @@ training_panel.png
 gitignore
 .gitattributes
 setup.py
+
+# Legacy ML/training scripts (not part of the web app)
+config.py
+network.py
+mcts.py
+train.py
+evaluate.py
+expert.py
+test_engine.py
+web/
