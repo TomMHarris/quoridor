@@ -1054,8 +1054,8 @@ async function tryAiMove() {
       // Easy: quick depth 2. Medium: depth 3. Hard: depth 5 cap, ~2s budget.
       // Iterative deepening means hard usually reaches depth 3-4 depending on
       // position complexity, sometimes 5 in the endgame.
-      const maxDepth = aiDepth === 1 ? 2 : aiDepth === 2 ? 3 : 5;
-      const timeBudget = aiDepth === 1 ? 300 : aiDepth === 2 ? 800 : 2000;
+      const maxDepth = aiDepth === 1 ? 2 : aiDepth === 2 ? 3 : 4;
+      const timeBudget = aiDepth === 1 ? 300 : aiDepth === 2 ? 800 : 1800;
       const move = AI.bestMove(state, maxDepth, timeBudget);
       if (move) {
         aiThinking = false;

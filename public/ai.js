@@ -299,16 +299,24 @@ const AI = (() => {
 
   // ── Evaluation ──
   //
-  // Two signals:
-  //   - Path difference (opp shortest path − my shortest path). Dominant signal.
-  //   - Wall resource (net walls in hand). Secondary — walls are valuable
-  //     because they can lengthen the opponent's future path.
-  //
-  // No hand-tuned positional heuristics. Strength comes from search depth.
+  // Three signals:
+  //   - Path difference (opp shortest path − my shortest path). Dominant.
+  //   - Tempo: whoever moves next gets a small bonus (they're one move away
+  //     from cutting their distance by 1). This makes the eval correctly
+  //     prefer positions where it's our turn at short path.
+  //   - Wall resource (net walls in hand). Secondary.
 
   function evaluate(s, aiPlayer) {
+    // Terminal positions. We nudge the ±10000 by the loser's remaining
+    // distance so that: among wins, finishing closer to goal (i.e. sooner,
+    // since you have to be at goal to win) is indistinguishable; among
+    // losses, having ended up closer to your own goal is scored higher.
+    // This stops the AI from looking indifferent between "lose now" and
+    // "lose later having made progress" — it now prefers to lose gracefully.
     if (s.winner !== undefined && s.winner !== null) {
-      return s.winner === aiPlayer ? 10000 : -10000;
+      if (s.winner === aiPlayer) return 10000;
+      const myDist = shortestPath(s, aiPlayer);
+      return -10000 + (9 - Math.min(myDist, 9));  // -9992 (almost won) to -10001 (nowhere)
     }
 
     const myDist = shortestPath(s, aiPlayer);
@@ -319,6 +327,9 @@ const AI = (() => {
       score += (theirDist - myDist) * 10;
       score += (s.wr[aiPlayer] - s.wr[p]) * 2;
     }
+    // Tempo: the player to move gets +5 (half a step-equivalent), since
+    // they can shorten their distance on the very next ply.
+    score += (s.cp === aiPlayer ? 5 : -5);
     return score;
   }
 
@@ -442,25 +453,50 @@ const AI = (() => {
     const s = fromServerState(serverState);
     const aiPlayer = s.cp;
 
+    // Opening shortcut: if no walls have been placed and our pawn is still at
+    // its starting square, the only sensible move is one step toward our goal.
+    // No search needed — saves ~1-2 seconds on move one.
+    if (Object.keys(s.walls).length === 0) {
+      const [pr, pc] = s.pawns[aiPlayer];
+      const goal = s.goals[aiPlayer];
+      const atStart = (goal.row === 0 && pr === 8 && pc === 4) ||
+                      (goal.row === 8 && pr === 0 && pc === 4) ||
+                      (goal.col === 0 && pr === 4 && pc === 8) ||
+                      (goal.col === 8 && pr === 4 && pc === 0);
+      if (atStart) {
+        let to;
+        if (goal.row === 0) to = [pr - 1, pc];
+        else if (goal.row === 8) to = [pr + 1, pc];
+        else if (goal.col === 0) to = [pr, pc - 1];
+        else to = [pr, pc + 1];
+        AI._lastDepth = 0;
+        AI._lastScore = 0;
+        return { type: "move", to };
+      }
+    }
+
     let orderedMoves = orderMovesAtRoot(s, aiPlayer);
     if (orderedMoves.length === 0) return null;
 
     const startTime = Date.now();
     let bestMoveFound = orderedMoves[0];
+    let bestScore = 0;
     let reachedDepth = 0;
 
     for (let depth = 1; depth <= maxDepth; depth++) {
       const iterStart = Date.now();
       const { score, move } = minimax(s, depth, -Infinity, Infinity, aiPlayer, true, orderedMoves);
       bestMoveFound = move;
+      bestScore = score;
       reachedDepth = depth;
 
       // Put the best move first for next iteration — massively improves
       // alpha-beta cuts at deeper levels (principal variation search benefit).
       orderedMoves = [move, ...orderedMoves.filter(m => !sameMove(m, move))];
 
-      // Stop if we've proven a forced outcome
-      if (score >= 10000 || score <= -10000) break;
+      // Stop if we've proven a forced outcome (terminal scores are
+      // ±10000 give-or-take the graceful-loss adjustment)
+      if (Math.abs(score) >= 9000) break;
 
       // Stop if next iteration would exceed time budget.
       // With good move ordering, alpha-beta scales roughly as sqrt(branching)
@@ -471,6 +507,8 @@ const AI = (() => {
     }
 
     AI._lastDepth = reachedDepth;  // for debugging/telemetry
+    AI._lastScore = bestScore;
+
     return bestMoveFound;
   }
 
