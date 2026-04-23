@@ -397,29 +397,16 @@ const AI = (() => {
 
   // ── Move ordering ──
   //
-  // At the root, we sort pawn moves by how much they shorten our path, and
+  // At the root, pawn moves are sorted by how much they shorten our path and
   // walls by how much they lengthen the opponent's. Better-looking moves get
   // tried first, so alpha-beta prunes weaker branches aggressively.
   //
-  // For variety across games, we lightly shuffle moves that look equally
-  // attractive (same heuristic score). Doesn't affect minimax's final choice
-  // if one move is genuinely better — only breaks heuristic ties.
-
-  function shuffleTies(arr) {
-    // Randomize the order of adjacent-equal-score elements (Fisher-Yates on tied groups)
-    let i = 0;
-    while (i < arr.length) {
-      let j = i + 1;
-      while (j < arr.length && arr[j].score === arr[i].score) j++;
-      // Shuffle arr[i..j)
-      for (let k = j - 1; k > i; k--) {
-        const r = i + Math.floor(Math.random() * (k - i + 1));
-        [arr[k], arr[r]] = [arr[r], arr[k]];
-      }
-      i = j;
-    }
-    return arr;
-  }
+  // Ordering is fully deterministic: same position → same move sequence.
+  // Variety across games comes from the different positions produced by
+  // different human (or opponent) play, not from any randomness in the AI.
+  // Earlier versions shuffled tied moves to keep games from looking identical,
+  // but that caused the AI to flip between two equal options on consecutive
+  // turns and pace back and forth.
 
   function orderMovesAtRoot(s, aiPlayer) {
     const myDistBefore = shortestPath(s, aiPlayer);
@@ -433,7 +420,6 @@ const AI = (() => {
       return { move: { type: "move", to }, score: reduction };
     });
     pawnMoves.sort((a, b) => b.score - a.score);
-    shuffleTies(pawnMoves);
 
     const wallCandidates = getCandidateWalls(s);
     const scoredWalls = wallCandidates.map(move => {
@@ -443,7 +429,6 @@ const AI = (() => {
       return { move, score: impact };
     });
     scoredWalls.sort((a, b) => b.score - a.score);
-    shuffleTies(scoredWalls);
 
     return [...pawnMoves.map(x => x.move), ...scoredWalls.map(x => x.move)];
   }
