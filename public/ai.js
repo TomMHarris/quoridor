@@ -339,6 +339,17 @@ const AI = (() => {
   // previous iteration's result. Good move ordering dramatically improves
   // alpha-beta pruning (best-first ordering gives O(b^(d/2)) instead of O(b^d)).
 
+  // Distance-to-terminal adjustment: scores >9000 (winning) get pulled down by
+  // 1 each ply we back up the tree, so faster wins bubble up with higher
+  // scores. Scores <-9000 (losing) get pushed up toward zero, so slower losses
+  // look better than fast ones. Without this, the AI picks arbitrarily among
+  // equally-valued forced wins or forced losses — producing sideways "pacing".
+  function backupScore(score) {
+    if (score > 9000)  return score - 1;
+    if (score < -9000) return score + 1;
+    return score;
+  }
+
   function minimax(s, depth, alpha, beta, aiPlayer, maximizing, orderedMoves = null) {
     if (depth === 0 || (s.winner !== undefined && s.winner !== null)) {
       return { score: evaluate(s, aiPlayer), move: null };
@@ -362,7 +373,8 @@ const AI = (() => {
       for (const move of allMoves) {
         const child = clone(s);
         applyMove(child, move);
-        const { score } = minimax(child, depth - 1, alpha, beta, aiPlayer, child.cp === aiPlayer);
+        const raw = minimax(child, depth - 1, alpha, beta, aiPlayer, child.cp === aiPlayer).score;
+        const score = backupScore(raw);
         if (score > maxScore) { maxScore = score; bestMove = move; }
         alpha = Math.max(alpha, score);
         if (beta <= alpha) break;
@@ -373,7 +385,8 @@ const AI = (() => {
       for (const move of allMoves) {
         const child = clone(s);
         applyMove(child, move);
-        const { score } = minimax(child, depth - 1, alpha, beta, aiPlayer, child.cp === aiPlayer);
+        const raw = minimax(child, depth - 1, alpha, beta, aiPlayer, child.cp === aiPlayer).score;
+        const score = backupScore(raw);
         if (score < minScore) { minScore = score; bestMove = move; }
         beta = Math.min(beta, score);
         if (beta <= alpha) break;
