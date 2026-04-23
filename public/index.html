@@ -763,7 +763,7 @@ function buildGrooveZones() {
 function render() {
   if (!state) return;
 
-  document.querySelectorAll(".pawn, .wall-placed").forEach(e => e.remove());
+  document.querySelectorAll(".pawn, .wall-placed, .wall-ghost").forEach(e => e.remove());
   document.querySelectorAll(".cell").forEach(e => e.classList.remove("legal-move"));
 
   const board = document.getElementById("board");
