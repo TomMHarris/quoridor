@@ -913,19 +913,27 @@ function cancelWall() {
 // ── Rotation ──
 
 function applyRotation(player) {
+  const wrapper = document.getElementById("board-wrapper");
   // Online mode: always show board from my perspective (my seat at the bottom)
   if (onlineMode && mySeat != null) {
     const angle = rotationAngle(mySeat) || 0;
-    document.getElementById("board-wrapper").style.transform = angle ? `rotate(${angle}deg)` : "";
+    wrapper.style.transform = angle ? `rotate(${angle}deg)` : "";
+    return;
+  }
+  // Vs computer: lock to the human's perspective (their pawn at the bottom)
+  if (vsComputer && aiSeat != null) {
+    const humanIdx = 1 - aiSeat;
+    const angle = rotationAngle(humanIdx) || 0;
+    wrapper.style.transform = angle ? `rotate(${angle}deg)` : "";
     return;
   }
   // Local mode: rotate per turn if enabled
   if (!autoRotate) {
-    document.getElementById("board-wrapper").style.transform = "";
+    wrapper.style.transform = "";
     return;
   }
   const angle = rotationAngle(player) || 0;
-  document.getElementById("board-wrapper").style.transform = angle ? `rotate(${angle}deg)` : "";
+  wrapper.style.transform = angle ? `rotate(${angle}deg)` : "";
 }
 
 // ── API actions ──
