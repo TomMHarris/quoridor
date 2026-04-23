@@ -298,41 +298,52 @@ const AI = (() => {
   }
 
   // ── Evaluation ──
+  //
+  // Two signals:
+  //   - Path difference (opp shortest path − my shortest path). Dominant signal.
+  //   - Wall resource (net walls in hand). Secondary — walls are valuable
+  //     because they can lengthen the opponent's future path.
+  //
+  // No hand-tuned positional heuristics. Strength comes from search depth.
 
   function evaluate(s, aiPlayer) {
-    // Check for winner
     if (s.winner !== undefined && s.winner !== null) {
       return s.winner === aiPlayer ? 10000 : -10000;
     }
 
-    let score = 0;
     const myDist = shortestPath(s, aiPlayer);
-
+    let score = 0;
     for (let p = 0; p < s.np; p++) {
       if (p === aiPlayer) continue;
       const theirDist = shortestPath(s, p);
       score += (theirDist - myDist) * 10;
-      // Bonus for having more walls
       score += (s.wr[aiPlayer] - s.wr[p]) * 2;
     }
-
     return score;
   }
 
   // ── Minimax with alpha-beta ──
+  //
+  // Takes an optional `orderedMoves` for the root — a pre-sorted list from a
+  // previous iteration's result. Good move ordering dramatically improves
+  // alpha-beta pruning (best-first ordering gives O(b^(d/2)) instead of O(b^d)).
 
-  function minimax(s, depth, alpha, beta, aiPlayer, maximizing) {
+  function minimax(s, depth, alpha, beta, aiPlayer, maximizing, orderedMoves = null) {
     if (depth === 0 || (s.winner !== undefined && s.winner !== null)) {
       return { score: evaluate(s, aiPlayer), move: null };
     }
 
-    const pawnMoves = getPawnMoves(s, s.cp).map(to => ({type: "move", to}));
-    const wallMoves = depth >= 1 ? getCandidateWalls(s) : [];  // Only consider walls at higher depths
-    const allMoves = [...pawnMoves, ...wallMoves];
+    let allMoves;
+    if (orderedMoves) {
+      allMoves = orderedMoves;
+    } else {
+      const pawnMoves = getPawnMoves(s, s.cp).map(to => ({ type: "move", to }));
+      const wallMoves = getCandidateWalls(s);
+      allMoves = [...pawnMoves, ...wallMoves];
+    }
 
     if (allMoves.length === 0) return { score: evaluate(s, aiPlayer), move: null };
 
-    // Move ordering: pawn moves first (they're usually more impactful per search node)
     let bestMove = allMoves[0];
 
     if (maximizing) {
@@ -360,19 +371,111 @@ const AI = (() => {
     }
   }
 
+  // ── Move ordering helpers ──
+
+  function orderMovesAtRoot(s, aiPlayer) {
+    // Pawn moves first, sorted by how much they reduce our distance to goal.
+    // Then walls, sorted by how much they increase opponent's distance.
+    // This heuristic ordering makes alpha-beta much more effective.
+    const myDistBefore = shortestPath(s, aiPlayer);
+    const opp = (aiPlayer + 1) % s.np;
+    const oppDistBefore = shortestPath(s, opp);
+
+    const pawnMoves = getPawnMoves(s, aiPlayer).map(to => {
+      const child = clone(s);
+      child.pawns[aiPlayer] = to;
+      const reduction = myDistBefore - shortestPath(child, aiPlayer);
+      return { move: { type: "move", to }, score: reduction };
+    });
+    pawnMoves.sort((a, b) => b.score - a.score);
+
+    const wallCandidates = getCandidateWalls(s);
+    const scoredWalls = wallCandidates.map(move => {
+      const child = clone(s);
+      applyMove(child, move);
+      const impact = shortestPath(child, opp) - oppDistBefore;
+      return { move, score: impact };
+    });
+    scoredWalls.sort((a, b) => b.score - a.score);
+
+    return [...pawnMoves.map(x => x.move), ...scoredWalls.map(x => x.move)];
+  }
+
   // ── Public API ──
 
   /**
-   * Pick the best move for the current player.
-   * @param {Object} serverState - The state object from the server API
+   * Pick the best move using alpha-beta minimax with root move ordering.
+   *
+   * Move ordering: at the root we sort pawn moves by how much they shorten
+   * our path, and walls by how much they lengthen the opponent's. This makes
+   * alpha-beta cut off weaker branches much faster.
+   *
+   * Safeguards:
+   *   - Anti-oscillation: among near-tied moves, prefer those that reduce our
+   *     shortest path. Stops back-and-forth behavior when minimax sees "move
+   *     forward then back" as equal to "move back then forward".
+   *   - Light randomness: among moves within 1 point of the best, pick one at
+   *     random. Different games play out differently.
+   *
+   * @param {Object} serverState - State object from the server API
    * @param {number} depth - Search depth (1=easy, 2=medium, 3=hard)
-   * @returns {Object} move - {type: "move", to: [r,c]} or {type: "wall", pos: [r,c], orient: "H"|"V"}
    */
-  function bestMove(serverState, depth = 2) {
+  function searchAtDepth(s, depth, aiPlayer, moves, myDistBefore) {
+    let alpha = -Infinity;
+    const scored = [];
+    for (const move of moves) {
+      const child = clone(s);
+      applyMove(child, move);
+      const { score } = minimax(child, depth - 1, alpha, Infinity, aiPlayer, child.cp === aiPlayer);
+      alpha = Math.max(alpha, score);
+      let progress = 0;
+      if (move.type === "move") {
+        progress = myDistBefore - shortestPath(child, aiPlayer);
+      }
+      scored.push({ move, score, progress });
+    }
+    return scored;
+  }
+
+  function bestMove(serverState, maxDepth = 2, timeLimitMs = 1500) {
     const s = fromServerState(serverState);
     const aiPlayer = s.cp;
-    const { move } = minimax(s, depth, -Infinity, Infinity, aiPlayer, true);
-    return move;
+    const myDistBefore = shortestPath(s, aiPlayer);
+
+    let moves = orderMovesAtRoot(s, aiPlayer);
+    if (moves.length === 0) return null;
+
+    // Iterative deepening: start shallow, go deeper while within time budget.
+    // Each completed iteration gives us better root move ordering for the
+    // next (best moves first → more alpha-beta cuts at deeper levels).
+    const startTime = Date.now();
+    let bestScored = null;
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      const iterStart = Date.now();
+      const scored = searchAtDepth(s, depth, aiPlayer, moves, myDistBefore);
+
+      // Reorder moves by score for the next iteration
+      scored.sort((a, b) => b.score - a.score);
+      moves = scored.map(x => x.move);
+      bestScored = scored;
+
+      // Stop if a forced win/loss is found
+      if (scored[0].score >= 10000 || scored[0].score <= -10000) break;
+
+      // Stop if estimated next iteration would exceed the time budget.
+      // Each deeper level is roughly 6-10x slower; use 8x as a conservative estimate.
+      const iterTime = Date.now() - iterStart;
+      const elapsed = Date.now() - startTime;
+      if (elapsed + iterTime * 8 > timeLimitMs) break;
+    }
+
+    // Pick best with anti-oscillation + light randomness
+    const maxScore = Math.max(...bestScored.map(x => x.score));
+    const margin = 1;
+    const nearBest = bestScored.filter(x => x.score >= maxScore - margin);
+    const maxProgress = Math.max(...nearBest.map(x => x.progress));
+    const finalists = nearBest.filter(x => x.progress === maxProgress);
+    return finalists[Math.floor(Math.random() * finalists.length)].move;
   }
 
   return { bestMove };

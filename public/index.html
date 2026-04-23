@@ -38,6 +38,21 @@
     --groove-w: 10px;
   }
 
+  html[data-theme="dark"] {
+    --bg: #2E2A24;
+    --board-bg: #3B362D;
+    --board-border: #4F483D;
+    --groove: #4A453C;
+    --groove-hover: #C4A56E44;
+    --highlight: #C4A56E44;
+    --highlight-strong: #C4A56E77;
+    --text: #EDE8DC;
+    --text-light: #8A8477;
+    --text-mid: #B3AD9F;
+  }
+
+  html, body { background: var(--bg); color: var(--text); transition: background 0.25s, color 0.25s; }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   html, body {
@@ -391,6 +406,9 @@
   }
   .info-content button:active { background: var(--groove); }
 
+  .pawn-choice { opacity: 0.45; transition: opacity 0.15s; }
+  .pawn-choice.active { opacity: 1; border-color: var(--wall) !important; }
+
   @media (min-width: 768px) {
     .action-btn { font-size: 0.8rem; padding: 12px 18px; min-height: 48px; }
     .player-indicator { gap: 8px; }
@@ -448,6 +466,15 @@
       <button id="btn-start-4" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">new 4p local</button>
     </div>
     <p style="font-size:0.85rem; color:var(--text-light); margin:12px 0 8px; font-style:italic;">vs computer</p>
+    <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-bottom: 8px; font-family:'DM Mono',monospace; font-size:0.7rem; color:var(--text-light);">
+      <span>play as</span>
+      <button id="btn-ai-as-light" class="pawn-choice active" data-seat="0" style="font-family:'DM Mono',monospace; font-size:0.7rem; padding:6px 10px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
+        <span class="player-dot light" style="width:14px; height:14px;"></span> light
+      </button>
+      <button id="btn-ai-as-dark" class="pawn-choice" data-seat="1" style="font-family:'DM Mono',monospace; font-size:0.7rem; padding:6px 10px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
+        <span class="player-dot dark" style="width:14px; height:14px;"></span> dark
+      </button>
+    </div>
     <div style="display: flex; justify-content: center; gap: 10px;">
       <button id="btn-ai-easy" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">easy</button>
       <button id="btn-ai-medium" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">medium</button>
@@ -458,7 +485,10 @@
       <button id="btn-online-2" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">2p online</button>
       <button id="btn-online-4" style="font-family:'DM Mono',monospace; font-size:0.72rem; padding:10px 18px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">4p online</button>
     </div>
-    <button id="btn-info-close" style="margin-top:16px;">close</button>
+    <div style="margin-top:16px; display:flex; gap:10px; justify-content:center; align-items:center;">
+      <button id="btn-info-close">close</button>
+      <button id="btn-theme" title="Toggle dark mode" style="font-family:'DM Mono',monospace; font-size:0.7rem; padding:8px 14px; background:var(--board-bg); border:1.5px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text-mid);">◐ theme</button>
+    </div>
     <p style="margin-top:20px; font-family:'DM Mono',monospace; font-size:0.65rem; color:var(--text-light);">
       <a href="https://github.com/TomMHarris/quoridor" target="_blank" style="color:var(--text-light); text-decoration:none;">github</a>
     </p>
@@ -492,7 +522,10 @@ let state = null;
 let history = [];
 let legalMoves = [];
 let legalWalls = [];
-let wallGhost = null;  // {wr, wc, orient} — confirmation preview for online mode
+let wallGhost = null;  // {wr, wc, orient} — confirmation preview (online or touch)
+
+// Detect touch devices (coarse pointer, no hover) — show wall confirmation
+const isTouchDevice = window.matchMedia && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 let isRotated = false;
 let autoRotate = false;
 let shortestPaths = [];
@@ -763,10 +796,13 @@ function onGrooveClick(wr, wc, orient) {
   if (state.walls_remaining[state.current_player] <= 0) return;
   if (!legalWalls.some(w => w[0] === wr && w[1] === wc && w[2] === orient)) return;
 
-  if (onlineMode) {
-    // Online: show ghost for confirmation, or confirm if tapping same spot
+  // Use ghost confirmation for online play and touch devices (phone/iPad)
+  // where tiny groove lines are hard to target precisely.
+  const needsConfirm = onlineMode || isTouchDevice;
+
+  if (needsConfirm) {
     if (wallGhost && wallGhost.wr === wr && wallGhost.wc === wc && wallGhost.orient === orient) {
-      confirmWall();
+      confirmWall();  // tapping same ghost confirms
     } else {
       wallGhost = { wr, wc, orient };
       render();
@@ -929,7 +965,10 @@ async function tryAiMove() {
   // Run AI in a setTimeout to let the UI update
   setTimeout(async () => {
     try {
-      const move = AI.bestMove(state, aiDepth);
+      // Easy: shallow + quick. Medium: moderate depth. Hard: deeper with 1.5s budget.
+      const maxDepth = aiDepth === 1 ? 1 : aiDepth === 2 ? 2 : 4;
+      const timeBudget = aiDepth === 1 ? 200 : aiDepth === 2 ? 600 : 1500;
+      const move = AI.bestMove(state, maxDepth, timeBudget);
       if (move) {
         aiThinking = false;
         await sendMove(move);
@@ -945,9 +984,9 @@ async function tryAiMove() {
   }, 50);
 }
 
-async function newGameVsComputer(depth) {
+async function newGameVsComputer(depth, aiPlayerIdx = 1) {
   vsComputer = true;
-  aiSeat = 1;  // AI plays as dark (player 1)
+  aiSeat = aiPlayerIdx;  // 0 = AI plays light (first), 1 = AI plays dark (second)
   aiDepth = depth;
   numPlayers = 2;
   onlineMode = false;
@@ -967,6 +1006,9 @@ async function newGameVsComputer(depth) {
   legalWalls = legalJson.legal_walls || [];
   shortestPaths = legalJson.shortest_paths || [];
   render();
+
+  // If AI plays first (light), trigger its opening move
+  if (aiSeat === 0) tryAiMove();
 }
 
 // ── Online multiplayer ──
@@ -1119,7 +1161,7 @@ document.getElementById("btn-wall-cancel").addEventListener("click", cancelWall)
 document.getElementById("btn-undo").addEventListener("click", undoMove);
 document.getElementById("btn-new").addEventListener("click", showInfo);
 document.getElementById("btn-play-again").addEventListener("click", () => {
-  if (vsComputer) newGameVsComputer(aiDepth);
+  if (vsComputer) newGameVsComputer(aiDepth, aiSeat);
   else if (onlineMode) createRoom(numPlayers);
   else newGame(numPlayers);
 });
@@ -1141,21 +1183,47 @@ document.getElementById("btn-online-4").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
   createRoom(4);
 });
+// Pawn color choice for vs computer. humanSeat = 0 (light, plays first) or 1 (dark, plays second).
+// AI takes the other seat.
+let humanSeat = 0;
+function updatePawnChoice() {
+  document.getElementById("btn-ai-as-light").classList.toggle("active", humanSeat === 0);
+  document.getElementById("btn-ai-as-dark").classList.toggle("active", humanSeat === 1);
+}
+document.getElementById("btn-ai-as-light").addEventListener("click", () => { humanSeat = 0; updatePawnChoice(); });
+document.getElementById("btn-ai-as-dark").addEventListener("click", () => { humanSeat = 1; updatePawnChoice(); });
+
 document.getElementById("btn-ai-easy").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
-  newGameVsComputer(1);
+  newGameVsComputer(1, 1 - humanSeat);
 });
 document.getElementById("btn-ai-medium").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
-  newGameVsComputer(2);
+  newGameVsComputer(2, 1 - humanSeat);
 });
 document.getElementById("btn-ai-hard").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
-  newGameVsComputer(3);
+  newGameVsComputer(3, 1 - humanSeat);
 });
 document.getElementById("btn-info").addEventListener("click", showInfo);
 document.getElementById("btn-info-close").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
+});
+
+// Theme toggle (light/dark)
+(function initTheme() {
+  const saved = localStorage.getItem("quoridor_theme");
+  if (saved === "dark") document.documentElement.setAttribute("data-theme", "dark");
+})();
+document.getElementById("btn-theme").addEventListener("click", () => {
+  const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+  if (isDark) {
+    document.documentElement.removeAttribute("data-theme");
+    localStorage.setItem("quoridor_theme", "light");
+  } else {
+    document.documentElement.setAttribute("data-theme", "dark");
+    localStorage.setItem("quoridor_theme", "dark");
+  }
 });
 
 document.getElementById("btn-rotate").addEventListener("click", () => {
