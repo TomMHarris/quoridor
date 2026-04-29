@@ -1071,12 +1071,17 @@ async function tryAiMove() {
   // Run AI in a setTimeout to let the UI update
   setTimeout(async () => {
     try {
-      // Easy: depth 1 (greedy on immediate eval — places obvious walls,
-      //       skips long-term tactics)
-      // Medium: depth 2 (plans one opponent reply ahead)
+      // Easy: depth 2 (plans one opponent reply — needed to notice that
+      //       racing head-on into the opponent loses by the jump rule)
+      // Medium: depth 3 (deeper tactics)
       // Hard: depth 4 with iterative deepening (full tactical search)
-      const maxDepth = aiDepth === 1 ? 1 : aiDepth === 2 ? 2 : 4;
-      const timeBudget = aiDepth === 1 ? 200 : aiDepth === 2 ? 500 : 1800;
+      //
+      // Earlier easy was depth 1 (purely greedy), but at depth 1 the AI
+      // never sees that two pawns racing into the same column means the
+      // second mover wins via a free jump. So it raced, the human raced,
+      // and the AI lost without ever placing a wall.
+      const maxDepth = aiDepth === 1 ? 2 : aiDepth === 2 ? 3 : 4;
+      const timeBudget = aiDepth === 1 ? 400 : aiDepth === 2 ? 900 : 1800;
       const move = AI.bestMove(state, maxDepth, timeBudget);
       if (move) {
         aiThinking = false;
