@@ -551,15 +551,25 @@
         <button id="btn-start-4" class="game-btn">4p</button>
       </div>
 
-      <span class="row-label">vs ai</span>
+      <span class="row-label">vs ai 2p</span>
+      <div class="row-buttons">
+        <button id="btn-ai-as-light" class="pawn-choice active" title="play as light"><span class="player-dot light"></span></button>
+        <button id="btn-ai-as-dark" class="pawn-choice" title="play as dark"><span class="player-dot dark"></span></button>
+      </div>
+
+      <span class="row-label">vs ai 4p</span>
+      <div class="row-buttons">
+        <button id="btn-ai-as-0" class="pawn-choice" title="play as light"><span class="player-dot light"></span></button>
+        <button id="btn-ai-as-1" class="pawn-choice" title="play as red"><span class="player-dot red"></span></button>
+        <button id="btn-ai-as-2" class="pawn-choice" title="play as dark"><span class="player-dot dark"></span></button>
+        <button id="btn-ai-as-3" class="pawn-choice" title="play as teal"><span class="player-dot teal"></span></button>
+      </div>
+
+      <span class="row-label">difficulty</span>
       <div class="row-buttons">
         <button id="btn-ai-easy" class="game-btn">easy</button>
         <button id="btn-ai-medium" class="game-btn">medium</button>
         <button id="btn-ai-hard" class="game-btn">hard</button>
-        <span class="pawn-toggle" style="margin-left:6px;">
-          <button id="btn-ai-as-light" class="pawn-choice active" title="play as light" data-seat="0"><span class="player-dot light"></span></button>
-          <button id="btn-ai-as-dark" class="pawn-choice" title="play as dark" data-seat="1"><span class="player-dot dark"></span></button>
-        </span>
       </div>
 
       <span class="row-label">online</span>
@@ -596,7 +606,10 @@ const FOUR_PLAYER_NAME = ["light", "red", "dark", "teal"];
 // 2p: P0=0°, P1=180°
 // 4p (bottom, left, top, right): P0=0°, P1=90°, P2=180°, P3=270°
 const ROTATION_2P = [0, 180];
-const ROTATION_4P = [0, 90, 180, 270];
+// CSS rotate is clockwise. To bring each seat's starting square to the bottom
+// of the rotated view: bottom→stay (0°), left→bottom (270°), top→bottom (180°),
+// right→bottom (90°).
+const ROTATION_4P = [0, 270, 180, 90];
 
 let numPlayers = 2;
 
@@ -618,7 +631,7 @@ let shortestPaths = [];
 
 // Computer opponent
 let vsComputer = false;
-let aiSeat = -1;       // which seat the AI plays as
+let humanSeat = 0;     // the seat the human plays; AI controls all the others
 let aiDepth = 2;       // 1=easy, 2=medium, 3=hard
 let aiThinking = false;
 
@@ -799,7 +812,7 @@ function render() {
   }
 
   // Legal moves (hide when ghost active, AI's turn, or thinking)
-  if (state.winner === null && !wallGhost && !(vsComputer && (state.current_player === aiSeat || aiThinking))) {
+  if (state.winner === null && !wallGhost && !(vsComputer && (state.current_player !== humanSeat || aiThinking))) {
     for (const m of legalMoves) {
       const cell = getCell(m[0], m[1]);
       if (cell) cell.classList.add("legal-move");
@@ -869,7 +882,7 @@ function updateActionBar() {
 
 function onCellClick(r, c) {
   if (!state || state.winner !== null || aiThinking) return;
-  if (vsComputer && state.current_player === aiSeat) return;
+  if (vsComputer && state.current_player !== humanSeat) return;
   if (wallGhost) { wallGhost = null; render(); return; }
   if (!legalMoves.some(m => m[0] === r && m[1] === c)) return;
   sendMove({ type: "move", to: [r, c] });
@@ -877,7 +890,7 @@ function onCellClick(r, c) {
 
 function onGrooveClick(wr, wc, orient) {
   if (!state || state.winner !== null || aiThinking) return;
-  if (vsComputer && state.current_player === aiSeat) return;
+  if (vsComputer && state.current_player !== humanSeat) return;
   if (onlineMode && state.current_player !== mySeat) return;
   if (state.walls_remaining[state.current_player] <= 0) return;
   if (!legalWalls.some(w => w[0] === wr && w[1] === wc && w[2] === orient)) return;
@@ -921,9 +934,8 @@ function applyRotation(player) {
     return;
   }
   // Vs computer: lock to the human's perspective (their pawn at the bottom)
-  if (vsComputer && aiSeat != null) {
-    const humanIdx = 1 - aiSeat;
-    const angle = rotationAngle(humanIdx) || 0;
+  if (vsComputer) {
+    const angle = rotationAngle(humanSeat) || 0;
     wrapper.style.transform = angle ? `rotate(${angle}deg)` : "";
     return;
   }
@@ -991,7 +1003,6 @@ async function undoMove() {
 async function newGame(np) {
   numPlayers = np || 2;
   vsComputer = false;
-  aiSeat = -1;
   aiThinking = false;
   document.getElementById("winner-overlay").classList.remove("show");
 
@@ -1051,7 +1062,8 @@ function showInfo() {
 async function tryAiMove() {
   if (!vsComputer || aiThinking) return;
   if (!state || state.winner !== null) return;
-  if (state.current_player !== aiSeat) return;
+  // The AI plays every seat that isn't the human's
+  if (state.current_player === humanSeat) return;
 
   aiThinking = true;
   render(); // show no legal moves while AI thinks
@@ -1059,14 +1071,12 @@ async function tryAiMove() {
   // Run AI in a setTimeout to let the UI update
   setTimeout(async () => {
     try {
-      // Easy: quick depth 2. Medium: depth 3. Hard: depth 5 cap, ~2s budget.
-      // Iterative deepening means hard usually reaches depth 3-4 depending on
-      // position complexity, sometimes 5 in the endgame.
-      // Easy: depth 1 (greedy, no lookahead to opponent reply — beatable)
-      // Medium: depth 2 (plans one opponent response ahead)
-      // Hard: depth 4 (iterative deepening; full tactical search)
+      // Easy: depth 1 (greedy on immediate eval — places obvious walls,
+      //       skips long-term tactics)
+      // Medium: depth 2 (plans one opponent reply ahead)
+      // Hard: depth 4 with iterative deepening (full tactical search)
       const maxDepth = aiDepth === 1 ? 1 : aiDepth === 2 ? 2 : 4;
-      const timeBudget = aiDepth === 1 ? 100 : aiDepth === 2 ? 400 : 1800;
+      const timeBudget = aiDepth === 1 ? 200 : aiDepth === 2 ? 500 : 1800;
       const move = AI.bestMove(state, maxDepth, timeBudget);
       if (move) {
         aiThinking = false;
@@ -1083,11 +1093,11 @@ async function tryAiMove() {
   }, 50);
 }
 
-async function newGameVsComputer(depth, aiPlayerIdx = 1) {
+async function newGameVsComputer(depth, humanSeatIdx = 0, np = 2) {
   vsComputer = true;
-  aiSeat = aiPlayerIdx;  // 0 = AI plays light (first), 1 = AI plays dark (second)
+  humanSeat = humanSeatIdx;
   aiDepth = depth;
-  numPlayers = 2;
+  numPlayers = np;
   onlineMode = false;
 
   document.getElementById("winner-overlay").classList.remove("show");
@@ -1098,16 +1108,17 @@ async function newGameVsComputer(depth, aiPlayerIdx = 1) {
 
   state = json.state;
   history = json.history;
-  document.getElementById("board-wrapper").style.transform = "";
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
   legalWalls = legalJson.legal_walls || [];
   shortestPaths = legalJson.shortest_paths || [];
+
+  applyRotation(state.current_player);
   render();
 
-  // If AI plays first (light), trigger its opening move
-  if (aiSeat === 0) tryAiMove();
+  // If the human isn't on move, kick off the AI's first move
+  if (state.current_player !== humanSeat) tryAiMove();
 }
 
 // ── Online multiplayer ──
@@ -1260,7 +1271,7 @@ document.getElementById("btn-wall-cancel").addEventListener("click", cancelWall)
 document.getElementById("btn-undo").addEventListener("click", undoMove);
 document.getElementById("btn-new").addEventListener("click", showInfo);
 document.getElementById("btn-play-again").addEventListener("click", () => {
-  if (vsComputer) newGameVsComputer(aiDepth, aiSeat);
+  if (vsComputer) newGameVsComputer(aiDepth, humanSeat, numPlayers);
   else if (onlineMode) createRoom(numPlayers);
   else newGame(numPlayers);
 });
@@ -1282,27 +1293,47 @@ document.getElementById("btn-online-4").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
   createRoom(4);
 });
-// Pawn color choice for vs computer. humanSeat = 0 (light, plays first) or 1 (dark, plays second).
-// AI takes the other seat.
-let humanSeat = 0;
+// Pawn-colour choice for vs computer.
+//   2-player: humanSeat = 0 (light, first) or 1 (dark, second)
+//   4-player: humanSeat = 0..3 (clockwise: light/red/dark/teal)
+// The AI takes every seat that isn't humanSeat.
+let aiNumPlayers = 2;  // 2 or 4 — chosen via the info-panel UI
+
 function updatePawnChoice() {
-  document.getElementById("btn-ai-as-light").classList.toggle("active", humanSeat === 0);
-  document.getElementById("btn-ai-as-dark").classList.toggle("active", humanSeat === 1);
+  // 2p toggle
+  const lightBtn = document.getElementById("btn-ai-as-light");
+  const darkBtn = document.getElementById("btn-ai-as-dark");
+  if (lightBtn) lightBtn.classList.toggle("active", aiNumPlayers === 2 && humanSeat === 0);
+  if (darkBtn) darkBtn.classList.toggle("active", aiNumPlayers === 2 && humanSeat === 1);
+  // 4p four-color choice
+  for (let i = 0; i < 4; i++) {
+    const b = document.getElementById(`btn-ai-as-${i}`);
+    if (b) b.classList.toggle("active", aiNumPlayers === 4 && humanSeat === i);
+  }
 }
-document.getElementById("btn-ai-as-light").addEventListener("click", () => { humanSeat = 0; updatePawnChoice(); });
-document.getElementById("btn-ai-as-dark").addEventListener("click", () => { humanSeat = 1; updatePawnChoice(); });
+document.getElementById("btn-ai-as-light").addEventListener("click", () => {
+  aiNumPlayers = 2; humanSeat = 0; updatePawnChoice();
+});
+document.getElementById("btn-ai-as-dark").addEventListener("click", () => {
+  aiNumPlayers = 2; humanSeat = 1; updatePawnChoice();
+});
+for (let i = 0; i < 4; i++) {
+  document.getElementById(`btn-ai-as-${i}`).addEventListener("click", () => {
+    aiNumPlayers = 4; humanSeat = i; updatePawnChoice();
+  });
+}
 
 document.getElementById("btn-ai-easy").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
-  newGameVsComputer(1, 1 - humanSeat);
+  newGameVsComputer(1, humanSeat, aiNumPlayers);
 });
 document.getElementById("btn-ai-medium").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
-  newGameVsComputer(2, 1 - humanSeat);
+  newGameVsComputer(2, humanSeat, aiNumPlayers);
 });
 document.getElementById("btn-ai-hard").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
-  newGameVsComputer(3, 1 - humanSeat);
+  newGameVsComputer(3, humanSeat, aiNumPlayers);
 });
 document.getElementById("btn-info").addEventListener("click", showInfo);
 document.getElementById("btn-info-close").addEventListener("click", () => {

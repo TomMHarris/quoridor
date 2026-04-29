@@ -54,7 +54,9 @@ const AI = (() => {
     const goals = np === 2
       ? [{row: 0}, {row: 8}]
       : [{row: 0}, {col: 8}, {row: 8}, {col: 0}];
-    return create(np, state.pawns, state.walls_remaining, state.walls, state.current_player, goals);
+    const s = create(np, state.pawns, state.walls_remaining, state.walls, state.current_player, goals);
+    s.move_count = state.move_count || 0;
+    return s;
   }
 
   function clone(s) {
@@ -451,26 +453,26 @@ const AI = (() => {
     const s = fromServerState(serverState);
     const aiPlayer = s.cp;
 
-    // Opening shortcut: if no walls have been placed and our pawn is still at
-    // its starting square, the only sensible move is one step toward our goal.
-    // No search needed — saves ~1-2 seconds on move one.
-    if (Object.keys(s.walls).length === 0) {
+    // Opening shortcut: ONLY on the very first move of the game (move_count
+    // === 0). Saves ~1s on the trivial opening, where there's only one
+    // sensible play.
+    //
+    // Earlier this also fired whenever the AI's pawn was at its start with no
+    // walls placed, but that meant the second-to-move AI would also use the
+    // shortcut on its first turn — racing forward without considering walls,
+    // even though by then the opponent had already advanced. The result was
+    // a noticeable easy-mode weakness when the human chose to move first.
+    if (s.move_count === 0) {
       const [pr, pc] = s.pawns[aiPlayer];
       const goal = s.goals[aiPlayer];
-      const atStart = (goal.row === 0 && pr === 8 && pc === 4) ||
-                      (goal.row === 8 && pr === 0 && pc === 4) ||
-                      (goal.col === 0 && pr === 4 && pc === 8) ||
-                      (goal.col === 8 && pr === 4 && pc === 0);
-      if (atStart) {
-        let to;
-        if (goal.row === 0) to = [pr - 1, pc];
-        else if (goal.row === 8) to = [pr + 1, pc];
-        else if (goal.col === 0) to = [pr, pc - 1];
-        else to = [pr, pc + 1];
-        AI._lastDepth = 0;
-        AI._lastScore = 0;
-        return { type: "move", to };
-      }
+      let to;
+      if (goal.row === 0) to = [pr - 1, pc];
+      else if (goal.row === 8) to = [pr + 1, pc];
+      else if (goal.col === 0) to = [pr, pc - 1];
+      else to = [pr, pc + 1];
+      AI._lastDepth = 0;
+      AI._lastScore = 0;
+      return { type: "move", to };
     }
 
     let orderedMoves = orderMovesAtRoot(s, aiPlayer);
