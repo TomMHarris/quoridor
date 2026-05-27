@@ -376,6 +376,30 @@
     transform: translate(-50%, -50%) scale(1);
   }
 
+  #toast {
+    position: fixed;
+    bottom: calc(80px + env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    background: var(--text);
+    color: var(--bg);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+    padding: 9px 16px;
+    border-radius: 6px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease, transform 0.22s ease;
+    z-index: 250;
+    white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  }
+  #toast.show {
+    opacity: 0.94;
+    transform: translateX(-50%) translateY(0);
+  }
+
   .info-btn {
     position: fixed;
     top: 10px;
@@ -1256,17 +1280,19 @@ function applyRoomState(json) {
     document.getElementById("share-overlay").classList.remove("show");
   }
 
-  // Check for incoming nudges (other seats nudged me)
+  // Check for incoming nudges (other seats nudged me).
+  // On the very first poll after join, swallow any pre-existing nudge so we
+  // don't flash for stale events. Subsequent polls show every newer nudge.
   if (json.nudges && mySeat != null) {
     const t = json.nudges[`seat_${mySeat}`];
     if (t && t > (lastNudgeSeen.me || 0)) {
+      const alreadyBootstrapped = !!lastNudgeSeen.bootstrap;
       lastNudgeSeen.me = t;
-      // ignore very first poll's stale nudge (server may persist nudges for hours)
-      if (!lastNudgeSeen.bootstrap) {
+      if (alreadyBootstrapped) {
         showNudgeReceived();
       }
     }
-    if (!lastNudgeSeen.bootstrap) lastNudgeSeen.bootstrap = true;
+    lastNudgeSeen.bootstrap = true;
   }
 
   updateSeatNames();
@@ -1480,13 +1506,30 @@ async function pollRoom() {
 async function sendNudge(targetSeat) {
   if (!onlineMode) return;
   if (targetSeat === mySeat) return;  // can't nudge yourself
-  await roomApiCall("nudge", { target_seat: targetSeat });
-  // Brief feedback on our side
-  const el = document.getElementById(`p${targetSeat}-indicator`);
-  if (el) {
-    el.classList.add("nudge-sent");
-    setTimeout(() => el.classList.remove("nudge-sent"), 600);
+  const isAi = isAiSeat(targetSeat);
+  const target = (seatInfo[targetSeat] || {}).name || "them";
+  const indicator = document.getElementById(`p${targetSeat}-indicator`);
+  if (indicator) {
+    indicator.classList.add("nudge-sent");
+    setTimeout(() => indicator.classList.remove("nudge-sent"), 600);
   }
+  // Toast for the sender — confirmation the nudge fired
+  showToast(isAi ? "poked ai (it won't care)" : `poked ${target}`);
+  await roomApiCall("nudge", { target_seat: targetSeat });
+}
+
+let toastTimer = null;
+function showToast(msg) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 1500);
 }
 
 function showNudgeReceived() {
