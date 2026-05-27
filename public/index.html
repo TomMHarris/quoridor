@@ -356,6 +356,14 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .seat-arrow {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.85rem;
+    line-height: 1;
+    color: var(--text-light);
+    user-select: none;
+  }
+  .player-indicator.active .seat-arrow { color: var(--text); }
 
   #nudge-flash {
     position: fixed;
@@ -804,6 +812,11 @@ function buildTopBar() {
     dot.className = `player-dot ${dotClass(p)}`;
     indicator.appendChild(dot);
 
+    const arrow = document.createElement("span");
+    arrow.className = "seat-arrow";
+    arrow.id = `p${p}-arrow`;
+    indicator.appendChild(arrow);
+
     const pips = document.createElement("div");
     pips.className = "wall-pips";
     pips.id = `p${p}-pips`;
@@ -820,6 +833,7 @@ function buildTopBar() {
     bar.appendChild(indicator);
   }
   updateSeatNames();
+  updateSeatArrows(state ? state.current_player : null);
 }
 
 function updateSeatNames() {
@@ -1060,27 +1074,62 @@ function cancelWall() {
 
 // ── Rotation ──
 
+// Current view angle (clockwise degrees) — how the board is rotated on screen.
+function viewRotationAngle(player) {
+  if (onlineMode && mySeat != null) return rotationAngle(mySeat) || 0;
+  if (vsComputer) return rotationAngle(humanSeat) || 0;
+  if (autoRotate && player != null) return rotationAngle(player) || 0;
+  return 0;
+}
+
+// Direction arrow for each seat, taking the current view rotation into account.
+// Absolute screen direction without any board rotation:
+//   2p: P0 moves up (↑), P1 moves down (↓)
+//   4p: P0 ↑, P1 → (left start), P2 ↓, P3 ← (right start)
+const ARROW_RING = ["↑", "→", "↓", "←"];
+function absArrowForSeat(p) {
+  if (numPlayers === 2) return p === 0 ? "↑" : "↓";
+  return ARROW_RING[p];  // 0↑ 1→ 2↓ 3←
+}
+function arrowForSeat(p, viewAngle) {
+  const base = absArrowForSeat(p);
+  const baseIdx = ARROW_RING.indexOf(base);
+  const steps = Math.round(((viewAngle % 360) + 360) % 360 / 90);
+  return ARROW_RING[(baseIdx + steps) % 4];
+}
+function updateSeatArrows(player) {
+  const angle = viewRotationAngle(player);
+  for (let p = 0; p < numPlayers; p++) {
+    const el = document.getElementById(`p${p}-arrow`);
+    if (el) el.textContent = arrowForSeat(p, angle);
+  }
+}
+
 function applyRotation(player) {
   const wrapper = document.getElementById("board-wrapper");
   // Online mode: always show board from my perspective (my seat at the bottom)
   if (onlineMode && mySeat != null) {
     const angle = rotationAngle(mySeat) || 0;
     wrapper.style.transform = angle ? `rotate(${angle}deg)` : "";
+    updateSeatArrows(player);
     return;
   }
   // Vs computer: lock to the human's perspective (their pawn at the bottom)
   if (vsComputer) {
     const angle = rotationAngle(humanSeat) || 0;
     wrapper.style.transform = angle ? `rotate(${angle}deg)` : "";
+    updateSeatArrows(player);
     return;
   }
   // Local mode: rotate per turn if enabled
   if (!autoRotate) {
     wrapper.style.transform = "";
+    updateSeatArrows(player);
     return;
   }
   const angle = rotationAngle(player) || 0;
   wrapper.style.transform = angle ? `rotate(${angle}deg)` : "";
+  updateSeatArrows(player);
 }
 
 // ── API actions ──
