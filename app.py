@@ -120,6 +120,8 @@ import secrets
 
 _rooms = {}  # In-memory room store for local dev
 
+AI_TOKEN = "__AI__"  # sentinel token marking an AI-controlled seat
+
 
 def _room_game_to_state(game):
     return _game_to_json(game)
@@ -132,6 +134,28 @@ def _room_legal(game):
         "pawn_moves": [list(m[1]) for m in pawn_moves],
         "legal_walls": [[m[1][0], m[1][1], m[1][2]] for m in wall_moves],
         "shortest_paths": [game.shortest_path_length(p) for p in range(game.num_players)],
+    }
+
+
+def _seats_info(room):
+    info = []
+    for i in range(room["num_players"]):
+        token = room["players"].get(f"seat_{i}")
+        info.append({
+            "seat": i,
+            "name": room.get("names", {}).get(f"seat_{i}", ""),
+            "is_ai": token == AI_TOKEN,
+            "occupied": token is not None,
+        })
+    return info
+
+
+def _room_extras(room):
+    return {
+        "seats": _seats_info(room),
+        "ai_depth": room.get("ai_depth"),
+        "nudges": room.get("nudges", {}),
+        "host_seat": 0,
     }
 
 
@@ -150,33 +174,41 @@ def room_api():
             np = data.get("num_players", 2)
             if np not in (2, 4):
                 np = 2
+            name = (data.get("name") or "").strip()[:24]
             room_id = secrets.token_urlsafe(4).replace("-", "").replace("_", "")[:6].lower()
             game = QuoridorGame(np)
             players = {f"seat_{i}": (token if i == 0 else None) for i in range(np)}
+            names = {f"seat_0": name} if name else {}
             room = {
-                "num_players": np, "players": players, "status": "waiting",
-                "game": game, "state": _room_game_to_state(game),
+                "num_players": np, "players": players, "names": names,
+                "status": "waiting", "game": game,
+                "state": _room_game_to_state(game),
                 "history": _history_to_json(game), "legal": _room_legal(game),
-                "move_count": 0,
+                "move_count": 0, "nudges": {},
             }
             _rooms[room_id] = room
-            return jsonify({
+            resp = {
                 "room_id": room_id, "seat": 0, "state": room["state"],
                 "history": room["history"], "legal": room["legal"],
                 "status": "waiting", "num_players": np,
-            })
+            }
+            resp.update(_room_extras(room))
+            return jsonify(resp)
 
         room = _rooms.get(room_id)
         if not room:
             return jsonify({"error": "room_not_found"}), 404
 
         def _get_seat():
+            if not token or token == AI_TOKEN:
+                return None
             for i in range(room["num_players"]):
                 if room["players"].get(f"seat_{i}") == token:
                     return i
             return None
 
         if action == "join":
+            name = (data.get("name") or "").strip()[:24]
             seat = _get_seat()
             if seat is None:
                 for i in range(room["num_players"]):
@@ -188,24 +220,49 @@ def room_api():
                     return jsonify({"error": "room_full"}), 400
                 if all(room["players"].get(f"seat_{i}") for i in range(room["num_players"])):
                     room["status"] = "playing"
+            if name:
+                room.setdefault("names", {})[f"seat_{seat}"] = name
             is_my_turn = room["state"]["current_player"] == seat
             legal = room["legal"] if is_my_turn else {"pawn_moves": [], "legal_walls": [], "shortest_paths": room["legal"].get("shortest_paths", [])}
-            return jsonify({
+            resp = {
                 "room_id": room_id, "seat": seat, "state": room["state"],
                 "history": room["history"], "legal": legal,
                 "status": room["status"], "num_players": room["num_players"],
                 "move_count": room["move_count"],
-            })
+            }
+            resp.update(_room_extras(room))
+            return jsonify(resp)
+
+        elif action == "fill_ai":
+            if room["players"].get("seat_0") != token:
+                return jsonify({"error": "only_host_can_fill"}), 403
+            ai_depth = data.get("ai_depth", 2)
+            if ai_depth not in (1, 2, 3):
+                ai_depth = 2
+            for i in range(room["num_players"]):
+                if room["players"].get(f"seat_{i}") is None:
+                    room["players"][f"seat_{i}"] = AI_TOKEN
+                    difficulty = {1: "easy", 2: "medium", 3: "hard"}[ai_depth]
+                    room.setdefault("names", {})[f"seat_{i}"] = f"AI ({difficulty})"
+            if all(room["players"].get(f"seat_{i}") for i in range(room["num_players"])):
+                room["status"] = "playing"
+            room["ai_depth"] = ai_depth
+            resp = {"status": room["status"]}
+            resp.update(_room_extras(room))
+            return jsonify(resp)
 
         elif action == "move":
             if room["status"] != "playing":
                 return jsonify({"error": "game_not_started"}), 400
-            seat = _get_seat()
-            if seat is None:
-                return jsonify({"error": "not_in_room"}), 403
             game = room["game"]
-            if game.current_player != seat:
-                return jsonify({"error": "not_your_turn"}), 400
+            current_seat_token = room["players"].get(f"seat_{game.current_player}")
+            is_ai_seat = current_seat_token == AI_TOKEN
+            if not is_ai_seat:
+                seat = _get_seat()
+                if seat is None:
+                    return jsonify({"error": "not_in_room"}), 403
+                if game.current_player != seat:
+                    return jsonify({"error": "not_your_turn"}), 400
             move_data = data.get("move", {})
             if move_data.get("type") == "move":
                 game.make_move(("move", tuple(move_data["to"])))
@@ -221,23 +278,42 @@ def room_api():
                 room["legal"] = {"pawn_moves": [], "legal_walls": [], "shortest_paths": [game.shortest_path_length(p) for p in range(game.num_players)]}
             else:
                 room["legal"] = _room_legal(game)
-            return jsonify({
+            resp = {
                 "state": room["state"], "history": room["history"],
                 "legal": room["legal"], "move_count": room["move_count"],
                 "status": room["status"],
-            })
+            }
+            resp.update(_room_extras(room))
+            return jsonify(resp)
+
+        elif action == "nudge":
+            sender_seat = _get_seat()
+            if sender_seat is None:
+                return jsonify({"error": "not_in_room"}), 403
+            try:
+                target_seat = int(data.get("target_seat"))
+            except (TypeError, ValueError):
+                return jsonify({"error": "bad_target"}), 400
+            if not (0 <= target_seat < room["num_players"]):
+                return jsonify({"error": "bad_target"}), 400
+            room.setdefault("nudges", {})[f"seat_{target_seat}"] = int(time.time() * 1000)
+            return jsonify({"ok": True})
 
         elif action == "poll":
             last = data.get("last_move_count", -1)
             seat = _get_seat()
             if room["move_count"] == last and room["status"] == "playing":
-                return jsonify({"changed": False, "status": room["status"]})
+                resp = {"changed": False, "status": room["status"]}
+                resp.update(_room_extras(room))
+                return jsonify(resp)
             is_my_turn = seat is not None and room["state"]["current_player"] == seat
             legal = room["legal"] if is_my_turn else {"pawn_moves": [], "legal_walls": [], "shortest_paths": room["legal"].get("shortest_paths", [])}
-            return jsonify({
+            resp = {
                 "changed": True, "state": room["state"], "history": room["history"],
                 "legal": legal, "move_count": room["move_count"], "status": room["status"],
-            })
+            }
+            resp.update(_room_extras(room))
+            return jsonify(resp)
 
         else:
             return jsonify({"error": f"Unknown action: {action}"}), 400

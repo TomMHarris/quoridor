@@ -323,6 +323,59 @@
   }
   .error-flash.show { opacity: 1; }
 
+  /* ── Share overlay seat list ── */
+  .share-seat {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.78rem;
+  }
+
+  /* ── Nudge ── */
+  .player-indicator {
+    cursor: default;
+    transition: opacity 0.3s, transform 0.2s;
+  }
+  .player-indicator.nudgeable { cursor: pointer; }
+  .player-indicator.nudgeable:hover .player-dot { transform: scale(1.15); }
+  .player-indicator.nudge-sent { animation: nudge-send 0.6s ease-out; }
+  @keyframes nudge-send {
+    0%   { transform: scale(1); }
+    30%  { transform: scale(1.25) rotate(-8deg); }
+    60%  { transform: scale(1.1) rotate(6deg); }
+    100% { transform: scale(1); }
+  }
+  .seat-name {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.62rem;
+    color: var(--text-light);
+    margin-left: 4px;
+    max-width: 70px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #nudge-flash {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.6);
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 3rem;
+    font-style: italic;
+    color: var(--accent);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 500;
+    transition: opacity 0.2s, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  #nudge-flash.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
   .info-btn {
     position: fixed;
     top: 10px;
@@ -529,13 +582,27 @@
 <div class="winner-overlay" id="share-overlay" style="z-index:250;">
   <p style="color:var(--text-mid); font-style:italic; margin-bottom:16px;">share this link to play</p>
   <p id="share-link" style="font-family:'DM Mono',monospace; font-size:0.7rem; color:var(--text); word-break:break-all; margin-bottom:16px; padding:10px 16px; background:var(--board-bg); border:1px solid var(--board-border); border-radius:6px; max-width:340px;"></p>
-  <button id="share-copy-btn" onclick="copyShareLink()" style="font-family:'Cormorant Garamond',Georgia,serif; font-size:1rem; padding:10px 28px; background:var(--board-bg); border:1px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text); margin-bottom:10px;">copy link</button>
-  <br>
+  <button id="share-copy-btn" onclick="copyShareLink()" style="font-family:'Cormorant Garamond',Georgia,serif; font-size:1rem; padding:10px 28px; background:var(--board-bg); border:1px solid var(--board-border); border-radius:6px; cursor:pointer; color:var(--text); margin-bottom:14px;">copy link</button>
+
+  <div id="share-seats" style="display:flex; flex-direction:column; gap:6px; align-items:flex-start; margin:0 auto 14px; font-family:'DM Mono',monospace; font-size:0.78rem; color:var(--text);"></div>
+
+  <div id="share-fill-ai" style="display:none; flex-direction:column; align-items:center; gap:8px; margin-bottom:14px;">
+    <p style="font-family:'DM Mono',monospace; font-size:0.7rem; color:var(--text-mid);">fill empty seats with computer</p>
+    <div style="display:flex; gap:8px;">
+      <button onclick="fillWithAi(1)" class="game-btn">easy</button>
+      <button onclick="fillWithAi(2)" class="game-btn">medium</button>
+      <button onclick="fillWithAi(3)" class="game-btn">hard</button>
+    </div>
+  </div>
+
   <button onclick="document.getElementById('share-overlay').classList.remove('show')" style="font-family:'DM Mono',monospace; font-size:0.7rem; padding:8px 16px; background:none; border:none; cursor:pointer; color:var(--text-light);">close</button>
 </div>
 
 <!-- Online status text -->
 <div id="online-status" style="position:fixed; top:10px; left:12px; font-family:'DM Mono',monospace; font-size:0.65rem; color:var(--text-light); z-index:50;"></div>
+
+<!-- Nudge received flash -->
+<div id="nudge-flash">poked!</div>
 <button class="info-btn" id="btn-info">i</button>
 
 <div class="info-panel" id="info-panel">
@@ -642,11 +709,27 @@ let mySeat = null;
 let playerToken = null;
 let pollTimer = null;
 let lastMoveCount = -1;
+let seatInfo = [];           // [{seat, name, is_ai, occupied}, ...]
+let onlineAiDepth = null;    // depth for AI seats in this room (null until host fills)
+let hostSeat = 0;
+let lastNudgeSeen = {};      // map seat → last timestamp we've shown a nudge for
+let myDisplayName = "";
+let onlineAiThinking = false;
 
 function getPlayerToken() {
   let t = localStorage.getItem("quoridor_token");
   if (!t) { t = crypto.randomUUID(); localStorage.setItem("quoridor_token", t); }
   return t;
+}
+
+function getMyDisplayName() {
+  if (!myDisplayName) myDisplayName = localStorage.getItem("quoridor_name") || "";
+  return myDisplayName;
+}
+
+function setMyDisplayName(name) {
+  myDisplayName = (name || "").trim().slice(0, 24);
+  localStorage.setItem("quoridor_name", myDisplayName);
 }
 
 // ── API ──
@@ -686,6 +769,12 @@ function buildTopBar() {
     const indicator = document.createElement("div");
     indicator.className = "player-indicator";
     indicator.id = `p${p}-indicator`;
+    // In online mode, every seat that's not me is pokeable
+    if (onlineMode && p !== mySeat) {
+      indicator.classList.add("nudgeable");
+      indicator.title = "poke";
+      indicator.addEventListener("click", () => sendNudge(p));
+    }
 
     const dot = document.createElement("div");
     dot.className = `player-dot ${dotClass(p)}`;
@@ -696,7 +785,29 @@ function buildTopBar() {
     pips.id = `p${p}-pips`;
     indicator.appendChild(pips);
 
+    // Player name (online mode only)
+    if (onlineMode) {
+      const name = document.createElement("span");
+      name.className = "seat-name";
+      name.id = `p${p}-name`;
+      indicator.appendChild(name);
+    }
+
     bar.appendChild(indicator);
+  }
+  updateSeatNames();
+}
+
+function updateSeatNames() {
+  if (!onlineMode) return;
+  for (let p = 0; p < numPlayers; p++) {
+    const el = document.getElementById(`p${p}-name`);
+    if (!el) continue;
+    const info = seatInfo[p];
+    if (!info) { el.textContent = ""; continue; }
+    if (info.is_ai) el.textContent = info.name || "AI";
+    else if (info.occupied) el.textContent = (p === mySeat ? "you" : (info.name || "?"));
+    else el.textContent = "(empty)";
   }
 }
 
@@ -1124,23 +1235,85 @@ async function newGameVsComputer(depth, humanSeatIdx = 0, np = 2) {
 
 function applyRoomState(json) {
   wallGhost = null;
-  state = json.state;
-  history = json.history || history;
-  lastMoveCount = json.move_count != null ? json.move_count : lastMoveCount;
+  if (json.state) state = json.state;
+  if (json.history) history = json.history;
+  if (json.move_count != null) lastMoveCount = json.move_count;
 
-  const legal = json.legal || {};
-  legalMoves = legal.pawn_moves || [];
-  legalWalls = legal.legal_walls || [];
-  shortestPaths = legal.shortest_paths || [];
-
-  applyRotation(state.current_player);
-  render();
-  updateOnlineStatus();
-
-  if (state.winner !== null) {
-    stopPolling();
-    setTimeout(() => showWinner(), 400);
+  if (json.legal) {
+    legalMoves = json.legal.pawn_moves || [];
+    legalWalls = json.legal.legal_walls || [];
+    shortestPaths = json.legal.shortest_paths || [];
   }
+
+  if (json.seats) seatInfo = json.seats;
+  if (json.ai_depth != null) onlineAiDepth = json.ai_depth;
+  if (json.host_seat != null) hostSeat = json.host_seat;
+
+  // Show share overlay state: waiting players only see it until status flips
+  if (json.status === "waiting") {
+    refreshShareOverlay();
+  } else if (json.status === "playing") {
+    document.getElementById("share-overlay").classList.remove("show");
+  }
+
+  // Check for incoming nudges (other seats nudged me)
+  if (json.nudges && mySeat != null) {
+    const t = json.nudges[`seat_${mySeat}`];
+    if (t && t > (lastNudgeSeen.me || 0)) {
+      lastNudgeSeen.me = t;
+      // ignore very first poll's stale nudge (server may persist nudges for hours)
+      if (!lastNudgeSeen.bootstrap) {
+        showNudgeReceived();
+      }
+    }
+    if (!lastNudgeSeen.bootstrap) lastNudgeSeen.bootstrap = true;
+  }
+
+  updateSeatNames();
+
+  if (state) {
+    applyRotation(state.current_player);
+    render();
+    updateOnlineStatus();
+
+    if (state.winner !== null) {
+      stopPolling();
+      setTimeout(() => showWinner(), 400);
+    } else {
+      // If it's an AI seat's turn AND I am the host, play the move
+      maybePlayAiMove();
+    }
+  }
+}
+
+function isAiSeat(seatIdx) {
+  return seatInfo.some(s => s.seat === seatIdx && s.is_ai);
+}
+
+async function maybePlayAiMove() {
+  if (!state || state.winner !== null) return;
+  if (mySeat !== hostSeat) return;            // only the host runs the search
+  if (!isAiSeat(state.current_player)) return;
+  if (onlineAiThinking) return;
+  if (!onlineAiDepth) return;
+
+  onlineAiThinking = true;
+  // small defer so the UI shows the new state first
+  setTimeout(async () => {
+    try {
+      const depth = onlineAiDepth;
+      const maxD = depth === 1 ? 1 : depth === 2 ? 2 : 4;
+      const budget = depth === 1 ? 200 : depth === 2 ? 500 : 1800;
+      const move = AI.bestMove(state, maxD, budget);
+      if (move) {
+        const resp = await roomApiCall("move", { move });
+        if (!resp.error) applyRoomState(resp);
+      }
+    } catch (e) {
+      // swallow; another poll will retry
+    }
+    onlineAiThinking = false;
+  }, 80);
 }
 
 function updateOnlineStatus() {
@@ -1148,13 +1321,25 @@ function updateOnlineStatus() {
   if (!el || !onlineMode) return;
   if (!state) { el.textContent = ""; return; }
   if (state.winner !== null) { el.textContent = ""; return; }
-  el.textContent = state.current_player === mySeat ? "your turn" : "waiting...";
+  if (isAiSeat(state.current_player)) {
+    el.textContent = "computer's turn";
+  } else if (state.current_player === mySeat) {
+    el.textContent = "your turn";
+  } else {
+    const name = (seatInfo[state.current_player] || {}).name;
+    el.textContent = name ? `${name}'s turn` : "waiting...";
+  }
 }
 
 async function createRoom(np) {
   playerToken = getPlayerToken();
   numPlayers = np;
-  const json = await roomApiCall("create", { num_players: np });
+  // Ask for a name (uses last-saved as default)
+  const enteredName = window.prompt("Your name (visible to other players):", getMyDisplayName());
+  if (enteredName === null) return;  // cancelled
+  setMyDisplayName(enteredName);
+
+  const json = await roomApiCall("create", { num_players: np, name: getMyDisplayName() });
   if (json.error) {
     if (json.error === "online_not_configured") showError("online not available");
     else showError(json.error);
@@ -1165,6 +1350,7 @@ async function createRoom(np) {
   mySeat = json.seat;
   onlineMode = true;
   numPlayers = json.num_players;
+  lastNudgeSeen = {};
 
   // Update URL
   const url = new URL(window.location);
@@ -1180,7 +1366,11 @@ async function createRoom(np) {
 async function joinRoom(id) {
   playerToken = getPlayerToken();
   roomId = id;
-  const json = await roomApiCall("join");
+  // Prompt for name on join too
+  const enteredName = window.prompt("Your name (visible to other players):", getMyDisplayName());
+  if (enteredName !== null) setMyDisplayName(enteredName);
+
+  const json = await roomApiCall("join", { name: getMyDisplayName() });
   if (json.error) {
     if (json.error === "room_not_found") showError("room not found");
     else if (json.error === "online_not_configured") showError("online not available");
@@ -1194,6 +1384,7 @@ async function joinRoom(id) {
   onlineMode = true;
   numPlayers = json.num_players;
   lastMoveCount = json.move_count || 0;
+  lastNudgeSeen = {};
 
   buildTopBar();
   applyRoomState(json);
@@ -1206,9 +1397,50 @@ async function joinRoom(id) {
 }
 
 function showShareOverlay() {
+  document.getElementById("share-overlay").classList.add("show");
+  refreshShareOverlay();
+}
+
+function refreshShareOverlay() {
+  const overlay = document.getElementById("share-overlay");
+  if (!overlay.classList.contains("show")) return;
   const link = window.location.href;
   document.getElementById("share-link").textContent = link;
-  document.getElementById("share-overlay").classList.add("show");
+
+  // Render seat list
+  const seatList = document.getElementById("share-seats");
+  seatList.innerHTML = "";
+  for (const s of seatInfo) {
+    const row = document.createElement("div");
+    row.className = "share-seat";
+    const dot = document.createElement("span");
+    dot.className = `player-dot ${dotClass(s.seat)}`;
+    dot.style.width = "12px"; dot.style.height = "12px";
+    row.appendChild(dot);
+    const label = document.createElement("span");
+    if (s.is_ai) {
+      label.textContent = s.name || "AI";
+    } else if (s.occupied) {
+      label.textContent = s.name || "(joined)";
+    } else {
+      label.textContent = "(empty)";
+      label.style.opacity = "0.5";
+    }
+    row.appendChild(label);
+    seatList.appendChild(row);
+  }
+
+  // Show host "fill with AI" controls only to the host while waiting
+  const fillRow = document.getElementById("share-fill-ai");
+  const hasEmpty = seatInfo.some(s => !s.occupied);
+  const amHost = mySeat === hostSeat;
+  fillRow.style.display = (amHost && hasEmpty) ? "" : "none";
+}
+
+async function fillWithAi(depth) {
+  const json = await roomApiCall("fill_ai", { ai_depth: depth });
+  if (json.error) { showError(json.error); return; }
+  applyRoomState(json);
 }
 
 async function copyShareLink() {
@@ -1240,14 +1472,31 @@ async function pollRoom() {
   const json = await roomApiCall("poll", { last_move_count: lastMoveCount });
   if (json.error) return;
 
-  // Hide share overlay when game starts
-  if (json.status === "playing") {
-    document.getElementById("share-overlay").classList.remove("show");
-  }
+  // Always re-apply seat info / nudges / status (cheap), even if game state
+  // didn't change. applyRoomState ignores absent fields.
+  applyRoomState(json);
+}
 
-  if (json.changed) {
-    applyRoomState(json);
+async function sendNudge(targetSeat) {
+  if (!onlineMode) return;
+  if (targetSeat === mySeat) return;  // can't nudge yourself
+  await roomApiCall("nudge", { target_seat: targetSeat });
+  // Brief feedback on our side
+  const el = document.getElementById(`p${targetSeat}-indicator`);
+  if (el) {
+    el.classList.add("nudge-sent");
+    setTimeout(() => el.classList.remove("nudge-sent"), 600);
   }
+}
+
+function showNudgeReceived() {
+  const flash = document.getElementById("nudge-flash");
+  if (!flash) return;
+  flash.classList.remove("show");
+  // force reflow to retrigger animation
+  void flash.offsetWidth;
+  flash.classList.add("show");
+  setTimeout(() => flash.classList.remove("show"), 1500);
 }
 
 function leaveOnline() {
@@ -1255,6 +1504,9 @@ function leaveOnline() {
   onlineMode = false;
   roomId = null;
   mySeat = null;
+  seatInfo = [];
+  onlineAiDepth = null;
+  lastNudgeSeen = {};
   const url = new URL(window.location);
   url.searchParams.delete("room");
   window.history.replaceState({}, "", url);
