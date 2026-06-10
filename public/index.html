@@ -243,9 +243,26 @@
     pointer-events: none;
   }
 
+  /* Best-move hint (local mode): blue, to read distinctly from the
+     gold walls and the red accent. */
+  .cell.hint-cell {
+    box-shadow: inset 0 0 0 3px #3B82C4;
+    border-radius: 4px;
+  }
+  .wall-hint {
+    position: absolute;
+    background: #3B82C4;
+    border: 1px solid #2C5F92;
+    border-radius: 3px;
+    z-index: 9;
+    pointer-events: none;
+    animation: ghost-pulse 1s ease-in-out infinite;
+  }
+
   .action-bar {
     width: 100%;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: center;
     gap: 8px;
@@ -596,6 +613,9 @@
 <div class="action-bar" id="action-bar">
   <button class="action-btn" id="btn-wall-confirm" style="display:none; background:var(--wall); color:white; border-color:var(--wall-edge);">place wall</button>
   <button class="action-btn" id="btn-wall-cancel" style="display:none; color:var(--accent); border-color:var(--accent);">cancel</button>
+  <button class="action-btn" id="btn-hint" style="display:none;">best move</button>
+  <button class="action-btn" id="btn-hint-accept" style="display:none; background:#3B82C4; color:white; border-color:#2C5F92;">play it</button>
+  <button class="action-btn" id="btn-hint-reject" style="display:none; color:var(--text-mid);">dismiss</button>
   <button class="action-btn" id="btn-undo">undo</button>
   <button class="action-btn" id="btn-new">new game</button>
   <button class="action-btn" id="btn-rotate">rotate: off</button>
@@ -721,6 +741,8 @@ let history = [];
 let legalMoves = [];
 let legalWalls = [];
 let wallGhost = null;  // {wr, wc, orient} — confirmation preview (online or touch)
+let hintMove = null;       // best-move suggestion (move object) shown in local play, or null
+let hintThinking = false;  // true while the hint search is running
 
 // Detect touch devices (coarse pointer, no hover) — show wall confirmation
 const isTouchDevice = window.matchMedia && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
@@ -925,8 +947,12 @@ function buildGrooveZones() {
 function render() {
   if (!state) return;
 
-  document.querySelectorAll(".pawn, .wall-placed, .wall-ghost").forEach(e => e.remove());
-  document.querySelectorAll(".cell").forEach(e => e.classList.remove("legal-move"));
+  // A hint only ever applies to local hot-seat play; never let one linger after
+  // switching into a vs-computer or online game.
+  if (hintMove && (vsComputer || onlineMode)) hintMove = null;
+
+  document.querySelectorAll(".pawn, .wall-placed, .wall-ghost, .wall-hint").forEach(e => e.remove());
+  document.querySelectorAll(".cell").forEach(e => e.classList.remove("legal-move", "hint-cell"));
 
   const board = document.getElementById("board");
   const cells = board.querySelectorAll(".cell");
@@ -958,6 +984,16 @@ function render() {
   // Ghost wall preview (online confirmation)
   if (wallGhost) {
     renderWall(board, wallGhost.wr, wallGhost.wc, wallGhost.orient, "wall-ghost", cellW, cellH, gapX, gapY);
+  }
+
+  // Best-move hint suggestion (local play)
+  if (hintMove) {
+    if (hintMove.type === "move") {
+      const cell = getCell(hintMove.to[0], hintMove.to[1]);
+      if (cell) cell.classList.add("hint-cell");
+    } else {
+      renderWall(board, hintMove.pos[0], hintMove.pos[1], hintMove.orient, "wall-hint", cellW, cellH, gapX, gapY);
+    }
   }
 
   // Legal moves (hide when ghost active, AI's turn, or thinking)
@@ -1019,12 +1055,25 @@ function updateWallPips() {
 
 function updateActionBar() {
   const hasGhost = wallGhost !== null;
+  const hasHint = hintMove !== null;
+  // Hint is offered only in local hot-seat play (not vs computer, not online).
+  const canHint = !vsComputer && !onlineMode && state && state.winner === null;
+
   document.getElementById("btn-wall-confirm").style.display = hasGhost ? "" : "none";
   document.getElementById("btn-wall-cancel").style.display = hasGhost ? "" : "none";
-  document.getElementById("btn-undo").style.display = hasGhost || onlineMode ? "none" : "";
+
+  const hintBtn = document.getElementById("btn-hint");
+  hintBtn.style.display = canHint && !hasGhost && !hasHint ? "" : "none";
+  hintBtn.disabled = hintThinking;
+  hintBtn.textContent = hintThinking ? "thinking…" : "best move";
+  document.getElementById("btn-hint-accept").style.display = hasHint ? "" : "none";
+  document.getElementById("btn-hint-reject").style.display = hasHint ? "" : "none";
+
+  const hideMisc = hasGhost || hasHint;
+  document.getElementById("btn-undo").style.display = hideMisc || onlineMode ? "none" : "";
   document.getElementById("btn-undo").disabled = !state || state.move_count === 0;
-  document.getElementById("btn-new").style.display = hasGhost ? "none" : "";
-  document.getElementById("btn-rotate").style.display = hasGhost || onlineMode ? "none" : "";
+  document.getElementById("btn-new").style.display = hideMisc ? "none" : "";
+  document.getElementById("btn-rotate").style.display = hideMisc || onlineMode ? "none" : "";
 }
 
 // ── Interaction ──
@@ -1039,6 +1088,7 @@ function onCellClick(r, c) {
 
 function onGrooveClick(wr, wc, orient) {
   if (!state || state.winner !== null || aiThinking) return;
+  hintMove = null;  // starting a wall placement clears any suggestion
   if (vsComputer && state.current_player !== humanSeat) return;
   if (onlineMode && state.current_player !== mySeat) return;
   if (state.walls_remaining[state.current_player] <= 0) return;
@@ -1069,6 +1119,42 @@ function confirmWall() {
 
 function cancelWall() {
   wallGhost = null;
+  render();
+}
+
+// ── Best-move hint (local hot-seat) ──
+//
+// Runs the same client-side AI the computer opponent uses, at depth 3, on the
+// current position for whoever is to move, then previews its choice. The player
+// can play it or dismiss it. Search is synchronous, so we defer behind a paint
+// to let the "thinking…" label show first.
+
+function requestHint() {
+  if (!state || state.winner !== null || hintThinking || hintMove) return;
+  if (vsComputer || onlineMode) return;
+  hintThinking = true;
+  updateActionBar();
+  setTimeout(() => {
+    try {
+      hintMove = AI.bestMove(state, 3, 1500);
+    } catch (e) {
+      hintMove = null;
+      showError("hint failed");
+    }
+    hintThinking = false;
+    render();
+  }, 30);
+}
+
+function acceptHint() {
+  if (!hintMove) return;
+  const move = hintMove;
+  hintMove = null;
+  sendMove(move);  // sendMove clears any lingering hint state too
+}
+
+function dismissHint() {
+  hintMove = null;
   render();
 }
 
@@ -1135,6 +1221,7 @@ function applyRotation(player) {
 // ── API actions ──
 
 async function sendMove(moveData) {
+  hintMove = null;  // any pending suggestion is stale once a move is made
   if (onlineMode) {
     const json = await roomApiCall("move", { move: moveData });
     if (json.error) { showError(json.error); return; }
@@ -1168,6 +1255,7 @@ async function sendMove(moveData) {
 
 async function undoMove() {
   if (!state || state.move_count === 0) return;
+  hintMove = null;
   const json = await apiCall("undo");
   if (json.error) { showError(json.error); return; }
 
@@ -1188,6 +1276,8 @@ async function newGame(np) {
   numPlayers = np || 2;
   vsComputer = false;
   aiThinking = false;
+  hintMove = null;       // don't carry a suggestion into a fresh local game
+  hintThinking = false;
   document.getElementById("winner-overlay").classList.remove("show");
 
   buildTopBar();
@@ -1307,8 +1397,11 @@ async function newGameVsComputer(depth, humanSeatIdx = 0, np = 2) {
 // ── Online multiplayer ──
 
 function applyRoomState(json) {
-  wallGhost = null;
-  if (json.state) state = json.state;
+  // Only clear a pending wall preview when the board actually advances.
+  // "Unchanged" polls (changed:false, no state) carry no `state` and must
+  // NOT wipe a placed-but-unconfirmed wall — otherwise the ghost vanishes on
+  // the next 1.5s poll tick and you have to double-click to beat the timer.
+  if (json.state) { wallGhost = null; state = json.state; }
   if (json.history) history = json.history;
   if (json.move_count != null) lastMoveCount = json.move_count;
 
@@ -1611,6 +1704,9 @@ function leaveOnline() {
 
 document.getElementById("btn-wall-confirm").addEventListener("click", confirmWall);
 document.getElementById("btn-wall-cancel").addEventListener("click", cancelWall);
+document.getElementById("btn-hint").addEventListener("click", requestHint);
+document.getElementById("btn-hint-accept").addEventListener("click", acceptHint);
+document.getElementById("btn-hint-reject").addEventListener("click", dismissHint);
 document.getElementById("btn-undo").addEventListener("click", undoMove);
 document.getElementById("btn-new").addEventListener("click", showInfo);
 document.getElementById("btn-play-again").addEventListener("click", () => {
