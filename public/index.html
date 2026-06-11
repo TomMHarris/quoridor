@@ -1158,12 +1158,13 @@ function requestHint() {
   updateActionBar();
   setTimeout(() => {
     try {
-      // Depth 4 (as strong as the "hard" opponent). A hint is a one-off, so a
-      // short pause is fine. The 2000ms budget is deliberately below ~3500ms:
-      // iterative deepening then reaches depth 4 in mid/endgames (~0.3-3.3s) but
-      // gracefully stops at depth 3 in wide-open early positions where depth 4
-      // would take ~10s. The opening (move_count 0) still returns instantly.
-      hintMove = AI.bestMove(state, 4, 2000);
+      // Depth 5 — one ply DEEPER than the "hard" opponent (depth 4), so the
+      // hint is at least hard-strength and generally beats it. The integer-key
+      // engine runs depth 5 in ~0.1-3.7s (was 14-54s). The 10s budget lets
+      // iterative deepening reach depth 5 where it fits and fall back to depth 4
+      // on slower devices / wide-open early positions. Opening (move_count 0)
+      // still returns instantly.
+      hintMove = AI.bestMove(state, 5, 10000);
     } catch (e) {
       hintMove = null;
       showError("hint failed");

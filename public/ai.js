@@ -14,12 +14,30 @@ const AI = (() => {
   const W = 8;          // wall grid size
   const DIRS = [[-1,0],[1,0],[0,-1],[0,1]];
 
+  // ── Reusable BFS buffers ──
+  //
+  // The search's hottest path is the BFS in shortestPath()/hasPath(), run at
+  // every leaf (once per player) and for every candidate wall. The original
+  // version allocated a fresh string-keyed object per call and hashed a
+  // template-literal key per cell. These buffers index cells by integer
+  // (idx = r*9+c) and use a generation stamp so they never need clearing —
+  // a cell counts as visited only if its stamp equals the current call's gen.
+  const _spDist = new Int16Array(81);   // shortestPath: distance per cell
+  const _spSeen = new Int32Array(81);   // shortestPath: visited stamp per cell
+  const _spQ    = new Int16Array(81);   // shortestPath: BFS queue
+  let   _spGen  = 0;
+  const _hpSeen = new Int32Array(81);   // hasPath: visited stamp per cell
+  const _hpQ    = new Int16Array(81);   // hasPath: BFS queue
+  let   _hpGen  = 0;
+
   // ── Compact game state ──
 
   function create(numPlayers, pawns, wallsRemaining, wallsPlaced, currentPlayer, goals) {
-    // Sets stored as objects with string keys for fast lookup
-    const hBlocked = {};  // "r,c" → true  (horizontal wall blocks step down from (r,c))
-    const vBlocked = {};  // "r,c" → true  (vertical wall blocks step right from (r,c))
+    // Edge-blocking maps are integer-indexed typed arrays (idx = r*9+c) for the
+    // hot canStep() path. centers/walls stay string-keyed objects — they're only
+    // touched in wall-conflict checks, far off the per-leaf path.
+    const hBlocked = new Uint8Array(81);  // horizontal wall blocks step down from (r,c)
+    const vBlocked = new Uint8Array(81);  // vertical wall blocks step right from (r,c)
     const wallCenters = {};
     const wallSet = {};   // "r,c,o" → true
 
@@ -27,11 +45,11 @@ const AI = (() => {
       wallSet[`${r},${c},${o}`] = true;
       wallCenters[`${r},${c}`] = true;
       if (o === "H") {
-        hBlocked[`${r},${c}`] = true;
-        hBlocked[`${r},${c+1}`] = true;
+        hBlocked[r*9+c] = 1;
+        hBlocked[r*9+c+1] = 1;
       } else {
-        vBlocked[`${r},${c}`] = true;
-        vBlocked[`${r+1},${c}`] = true;
+        vBlocked[r*9+c] = 1;
+        vBlocked[(r+1)*9+c] = 1;
       }
     }
 
@@ -66,8 +84,8 @@ const AI = (() => {
       wr: s.wr.slice(),
       walls: Object.assign({}, s.walls),
       centers: Object.assign({}, s.centers),
-      hb: Object.assign({}, s.hb),
-      vb: Object.assign({}, s.vb),
+      hb: s.hb.slice(),   // Uint8Array.slice() copies
+      vb: s.vb.slice(),
       cp: s.cp,
       goals: s.goals,
     };
@@ -78,10 +96,10 @@ const AI = (() => {
   function canStep(s, r1, c1, r2, c2) {
     if (r2 < 0 || r2 >= B || c2 < 0 || c2 >= B) return false;
     const dr = r2 - r1, dc = c2 - c1;
-    if (dr === 1)  return !s.hb[`${r1},${c1}`];
-    if (dr === -1) return !s.hb[`${r2},${c2}`];
-    if (dc === 1)  return !s.vb[`${r1},${c1}`];
-    if (dc === -1) return !s.vb[`${r2},${c2}`];
+    if (dr === 1)  return !s.hb[r1*9+c1];
+    if (dr === -1) return !s.hb[r2*9+c2];
+    if (dc === 1)  return !s.vb[r1*9+c1];
+    if (dc === -1) return !s.vb[r2*9+c2];
     return false;
   }
 
@@ -138,39 +156,48 @@ const AI = (() => {
 
   function addWallEdges(s, r, c, o) {
     if (o === "H") {
-      s.hb[`${r},${c}`] = true;
-      s.hb[`${r},${c+1}`] = true;
+      s.hb[r*9+c] = 1;
+      s.hb[r*9+c+1] = 1;
     } else {
-      s.vb[`${r},${c}`] = true;
-      s.vb[`${r+1},${c}`] = true;
+      s.vb[r*9+c] = 1;
+      s.vb[(r+1)*9+c] = 1;
     }
   }
 
+  // Safe to clear (set 0) rather than track previous values: a candidate wall
+  // only reaches here after wallHasConflict() rules out any adjacent same-
+  // orientation wall, so its two edges are never shared with an existing wall.
   function removeWallEdges(s, r, c, o) {
     if (o === "H") {
-      delete s.hb[`${r},${c}`];
-      delete s.hb[`${r},${c+1}`];
+      s.hb[r*9+c] = 0;
+      s.hb[r*9+c+1] = 0;
     } else {
-      delete s.vb[`${r},${c}`];
-      delete s.vb[`${r+1},${c}`];
+      s.vb[r*9+c] = 0;
+      s.vb[(r+1)*9+c] = 0;
     }
   }
 
   function hasPath(s, player) {
     const [sr, sc] = s.pawns[player];
     const g = s.goals[player];
-    const visited = new Set([`${sr},${sc}`]);
-    const queue = [[sr, sc]];
-    let qi = 0;
-    while (qi < queue.length) {
-      const [r, c] = queue[qi++];
-      if ((g.row !== undefined && r === g.row) || (g.col !== undefined && c === g.col)) return true;
-      for (const [dr, dc] of DIRS) {
-        const nr = r + dr, nc = c + dc;
-        const key = `${nr},${nc}`;
-        if (!visited.has(key) && canStep(s, r, c, nr, nc)) {
-          visited.add(key);
-          queue.push([nr, nc]);
+    const grow = g.row, gcol = g.col;
+    if (_hpGen > 2e9) { _hpSeen.fill(0); _hpGen = 0; }
+    const gen = ++_hpGen;
+    const start = sr*9 + sc;
+    _hpSeen[start] = gen;
+    _hpQ[0] = start;
+    let head = 0, tail = 1;
+    while (head < tail) {
+      const idx = _hpQ[head++];
+      const r = (idx / 9) | 0, c = idx - r*9;
+      if ((grow !== undefined && r === grow) || (gcol !== undefined && c === gcol)) return true;
+      for (let k = 0; k < 4; k++) {
+        const nr = r + DIRS[k][0], nc = c + DIRS[k][1];
+        if (nr < 0 || nr >= B || nc < 0 || nc >= B) continue;
+        const nidx = nr*9 + nc;
+        if (_hpSeen[nidx] !== gen && canStep(s, r, c, nr, nc)) {
+          _hpSeen[nidx] = gen;
+          _hpQ[tail++] = nidx;
         }
       }
     }
@@ -193,20 +220,27 @@ const AI = (() => {
   function shortestPath(s, player) {
     const [sr, sc] = s.pawns[player];
     const g = s.goals[player];
-    const dist = {};
-    dist[`${sr},${sc}`] = 0;
-    const queue = [[sr, sc]];
-    let qi = 0;
-    while (qi < queue.length) {
-      const [r, c] = queue[qi++];
-      const d = dist[`${r},${c}`];
-      if ((g.row !== undefined && r === g.row) || (g.col !== undefined && c === g.col)) return d;
-      for (const [dr, dc] of DIRS) {
-        const nr = r + dr, nc = c + dc;
-        const key = `${nr},${nc}`;
-        if (dist[key] === undefined && canStep(s, r, c, nr, nc)) {
-          dist[key] = d + 1;
-          queue.push([nr, nc]);
+    const grow = g.row, gcol = g.col;
+    if (_spGen > 2e9) { _spSeen.fill(0); _spGen = 0; }
+    const gen = ++_spGen;
+    const start = sr*9 + sc;
+    _spSeen[start] = gen;
+    _spDist[start] = 0;
+    _spQ[0] = start;
+    let head = 0, tail = 1;
+    while (head < tail) {
+      const idx = _spQ[head++];
+      const r = (idx / 9) | 0, c = idx - r*9;
+      const d = _spDist[idx];
+      if ((grow !== undefined && r === grow) || (gcol !== undefined && c === gcol)) return d;
+      for (let k = 0; k < 4; k++) {
+        const nr = r + DIRS[k][0], nc = c + DIRS[k][1];
+        if (nr < 0 || nr >= B || nc < 0 || nc >= B) continue;
+        const nidx = nr*9 + nc;
+        if (_spSeen[nidx] !== gen && canStep(s, r, c, nr, nc)) {
+          _spSeen[nidx] = gen;
+          _spDist[nidx] = d + 1;
+          _spQ[tail++] = nidx;
         }
       }
     }
