@@ -399,7 +399,7 @@
   </table>
 </div>
 
-<p>The first column is how many positions the computer would have to examine if it checked every possibility. The second is how many it actually checks. Two tricks do the work. <em>Alpha-beta pruning</em> skips any branch that has already been shown to be worse than an alternative. <em>Candidate filtering</em> ignores walls placed far from the action, where they cannot affect either player's path. Together they reduce the work by four orders of magnitude at depth 4.</p>
+<p>The first column is how many positions the computer would have to examine if it checked every possibility. The second is how many it actually checks. Two tricks do the work. <em>Alpha-beta pruning</em> skips any branch that has already been shown to be worse than an alternative. <em>Candidate filtering</em> ignores walls placed far from the action, where they cannot affect either player's path. Together they reduce the work by roughly three orders of magnitude at depth 4 — and four by depth 5.</p>
 
 <h2>how long that takes</h2>
 

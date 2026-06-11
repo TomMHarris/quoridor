@@ -741,8 +741,9 @@ let history = [];
 let legalMoves = [];
 let legalWalls = [];
 let wallGhost = null;  // {wr, wc, orient} — confirmation preview (online or touch)
-let hintMove = null;       // best-move suggestion (move object) shown in local play, or null
+let hintMove = null;       // best-move suggestion (move object), or null
 let hintThinking = false;  // true while the hint search is running
+let hintUsesLeft = [];     // local hot-seat only: best-move uses remaining per seat (3 each)
 
 // Detect touch devices (coarse pointer, no hover) — show wall confirmation
 const isTouchDevice = window.matchMedia && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
@@ -947,9 +948,8 @@ function buildGrooveZones() {
 function render() {
   if (!state) return;
 
-  // A hint only ever applies to local hot-seat play; never let one linger after
-  // switching into a vs-computer or online game.
-  if (hintMove && (vsComputer || onlineMode)) hintMove = null;
+  // Hints exist in local and vs-computer play, never online.
+  if (hintMove && onlineMode) hintMove = null;
 
   document.querySelectorAll(".pawn, .wall-placed, .wall-ghost, .wall-hint").forEach(e => e.remove());
   document.querySelectorAll(".cell").forEach(e => e.classList.remove("legal-move", "hint-cell"));
@@ -1056,16 +1056,31 @@ function updateWallPips() {
 function updateActionBar() {
   const hasGhost = wallGhost !== null;
   const hasHint = hintMove !== null;
-  // Hint is offered only in local hot-seat play (not vs computer, not online).
-  const canHint = !vsComputer && !onlineMode && state && state.winner === null;
+
+  // Hint availability by mode: vs-computer = unlimited on your own turn,
+  // local hot-seat = 3 uses per player (count shown), online = never.
+  let hintAvailable = false;
+  let hintLabel = "best move";
+  if (state && state.winner === null && !onlineMode) {
+    if (vsComputer) {
+      hintAvailable = state.current_player === humanSeat && !aiThinking;
+    } else {
+      const left = hintUsesLeft[state.current_player] || 0;
+      hintAvailable = left > 0;
+      hintLabel = `best move · ${left} left`;
+    }
+  }
 
   document.getElementById("btn-wall-confirm").style.display = hasGhost ? "" : "none";
   document.getElementById("btn-wall-cancel").style.display = hasGhost ? "" : "none";
 
   const hintBtn = document.getElementById("btn-hint");
-  hintBtn.style.display = canHint && !hasGhost && !hasHint ? "" : "none";
+  // Stay visible while thinking (shows "thinking…") even though the local
+  // counter was just decremented and might otherwise hide the button.
+  const showHint = hintThinking || (hintAvailable && !hasGhost && !hasHint);
+  hintBtn.style.display = showHint ? "" : "none";
   hintBtn.disabled = hintThinking;
-  hintBtn.textContent = hintThinking ? "thinking…" : "best move";
+  hintBtn.textContent = hintThinking ? "thinking…" : hintLabel;
   document.getElementById("btn-hint-accept").style.display = hasHint ? "" : "none";
   document.getElementById("btn-hint-reject").style.display = hasHint ? "" : "none";
 
@@ -1131,12 +1146,24 @@ function cancelWall() {
 
 function requestHint() {
   if (!state || state.winner !== null || hintThinking || hintMove) return;
-  if (vsComputer || onlineMode) return;
+  if (onlineMode) return;                                       // never in online play
+  if (vsComputer) {
+    if (state.current_player !== humanSeat || aiThinking) return;  // only on your own turn
+  } else {
+    // Local hot-seat: 3 uses per player. Consume one on request.
+    if ((hintUsesLeft[state.current_player] || 0) <= 0) return;
+    hintUsesLeft[state.current_player]--;
+  }
   hintThinking = true;
   updateActionBar();
   setTimeout(() => {
     try {
-      hintMove = AI.bestMove(state, 3, 1500);
+      // Depth 4 (as strong as the "hard" opponent). A hint is a one-off, so a
+      // short pause is fine. The 2000ms budget is deliberately below ~3500ms:
+      // iterative deepening then reaches depth 4 in mid/endgames (~0.3-3.3s) but
+      // gracefully stops at depth 3 in wide-open early positions where depth 4
+      // would take ~10s. The opening (move_count 0) still returns instantly.
+      hintMove = AI.bestMove(state, 4, 2000);
     } catch (e) {
       hintMove = null;
       showError("hint failed");
@@ -1278,6 +1305,7 @@ async function newGame(np) {
   aiThinking = false;
   hintMove = null;       // don't carry a suggestion into a fresh local game
   hintThinking = false;
+  hintUsesLeft = Array(numPlayers).fill(3);   // 3 best-move uses per player
   document.getElementById("winner-overlay").classList.remove("show");
 
   buildTopBar();
@@ -1372,6 +1400,8 @@ async function newGameVsComputer(depth, humanSeatIdx = 0, np = 2) {
   aiDepth = depth;
   numPlayers = np;
   onlineMode = false;
+  hintMove = null;       // vs-computer hints are unlimited; just clear any leftover
+  hintThinking = false;
 
   document.getElementById("winner-overlay").classList.remove("show");
   buildTopBar();
