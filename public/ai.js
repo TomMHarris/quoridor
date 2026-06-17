@@ -554,28 +554,10 @@ const AI = (() => {
 
   // ── Easy opponent ──
   //
-  // Easy is a deliberately shallow, *deterministic* player: no minimax
-  // lookahead and no randomness (randomness was removed elsewhere because it
-  // made the AI pace back and forth between equally-rated moves). It scores
-  // every legal move by the resulting shortest-path race and takes the best —
-  // i.e. a plain 0-ply greedy search.
-  //
-  // The one instinct it adds over naive greedy is *blocking when it's losing*.
-  // Naive greedy will never play a wall that only lengthens the opponent's path
-  // by one step, because racing forward (my path −1 → +10) always edges out
-  // such a wall (their path +1 → +10, minus the wall cost). On an open board a
-  // single wall in front of a runner adds exactly one step, so greedy-easy would
-  // happily watch an opponent stroll straight to the goal without ever raising a
-  // wall — the "it doesn't even try to stop you" games. (Mid-game, where walls
-  // and edges make 2+-step blocks available, greedy already blocks and feels
-  // tough — hence easy oscillating between braindead and hard.)
-  //
-  // Fix: once Easy is behind in the race AND the leading opponent is nearing
-  // home, it values a one-step block enough to prefer it over racing — the way
-  // an amateur throws a wall down when you're about to win. It still plays
-  // single, uncoordinated walls (no lookahead, no traps, and it stops advancing
-  // while it does), so a thoughtful human routes around it and wins. Stronger
-  // than before, still clearly below medium's 1-ply tactics.
+  // Easy is the original deliberately-weak player: a depth-1 greedy search (no
+  // lookahead, no randomness — randomness was removed elsewhere because it made
+  // the AI pace between equally-rated moves), plus ONE small concession so it
+  // doesn't sit idle while you walk straight to the goal. See bestMoveEasy.
 
   function leadingOpponentDist(s, aiPlayer) {
     let best = 99;
@@ -588,64 +570,45 @@ const AI = (() => {
   }
 
   function bestMoveEasy(serverState) {
-    const s = fromServerState(serverState);
-    const aiPlayer = s.cp;
-
-    // Opening: nothing to react to on move 0 — just step toward goal.
-    if (s.move_count === 0) {
-      const [pr, pc] = s.pawns[aiPlayer];
-      const goal = s.goals[aiPlayer];
-      let to;
-      if (goal.row === 0) to = [pr - 1, pc];
-      else if (goal.row === 8) to = [pr + 1, pc];
-      else if (goal.col === 0) to = [pr, pc - 1];
-      else to = [pr, pc + 1];
-      AI._lastDepth = 0;
-      AI._lastScore = 0;
-      return { type: "move", to };
-    }
-
-    const myDist = shortestPath(s, aiPlayer);
-    const oppDist = leadingOpponentDist(s, aiPlayer);
-    const behind = myDist > oppDist;          // we're losing the race
-
-    // Wall knobs, in score units (one step of path = 10).
-    const WALL_COST = 2;                       // mild reluctance to spend a wall
-    // Block urgency grows as the leading opponent nears their goal. It only
-    // applies when we're behind, and only out-scores racing (must exceed
-    // WALL_COST) once the opponent is within ~5 of home — so early on, with the
-    // opponent still near its start, Easy just races like before.
-    const urgency = behind ? Math.max(0, B - 1 - oppDist) : 0;
-
-    const moves = [];
-    for (const to of getPawnMoves(s, aiPlayer)) moves.push({ type: "move", to });
-    for (const w of getCandidateWalls(s)) moves.push(w);
-
-    // Argmax with strict ">" and pawn moves listed first, so ties favour racing
-    // over spending a wall — and the whole selection stays deterministic.
-    let bestMv = moves[0];
-    let bestScore = -Infinity;
-    for (const move of moves) {
-      const child = clone(s);
-      applyMove(child, move);
-      let v;
-      if (child.winner === aiPlayer) {
-        v = 1e6;                               // a move that wins outright — take it
-      } else {
-        const nm = shortestPath(child, aiPlayer);
-        const no = leadingOpponentDist(child, aiPlayer);
-        v = (no - nm) * 10;                    // path race: opponent far, us close
-        if (move.type === "wall") {
-          v -= WALL_COST;
-          v += urgency;                        // block-when-losing incentive
-        }
-      }
-      if (v > bestScore) { bestScore = v; bestMv = move; }
-    }
-
+    // Start from the original, deliberately-weak Easy: a depth-1 greedy search
+    // (no lookahead, no randomness). bestMove at depth 1 reproduces it exactly,
+    // including its opening shortcut. This greedy player already grabs any
+    // *strong* wall on its own — one that lengthens the opponent's path by 2+
+    // (10·Δ − 2 ≥ 18 beats a forward step's +10) — which is its occasional
+    // "sometimes tough" block.
+    const base = bestMove(serverState, 1, 250);
     AI._lastDepth = 0;
-    AI._lastScore = bestScore;
-    return bestMv;
+
+    // What greedy never does is play a wall that lengthens a full-row-goal path
+    // by only ONE step: racing forward (+10) always edges it out (+10 − 2 wall
+    // cost). On an open board a single wall in front of a runner adds exactly
+    // one step, so greedy will watch an opponent walk straight to the goal
+    // without ever defending — the "it doesn't even try to stop you" games.
+    //
+    // We add ONE concession: Easy may throw such a single-step block, but only
+    // as a last stand — when it is clearly behind AND the leader is all but
+    // home. Kept this narrow on purpose: an earlier attempt that blocked from
+    // midfield on spent all ten walls and beat humans. A late, lone wall lets
+    // Easy look like it's trying without raising its strength — verified that a
+    // shallow search (≈ a thinking human) still beats it comfortably.
+    const BLOCK_NEAR = 2;                        // only once the leader is this close to home
+    if (!base || base.type !== "move") return base;   // already a wall (a strong block), or nothing
+    const s = fromServerState(serverState);
+    const me = s.cp;
+    if (s.wr[me] <= 0) return base;                    // out of walls
+    const oppDist = leadingOpponentDist(s, me);
+    if (!(shortestPath(s, me) > oppDist && oppDist <= BLOCK_NEAR)) return base;
+
+    // Behind and the leader is nearly home: play the legal wall that delays it
+    // most, if any actually does (deterministic — first best in candidate order).
+    let bestWall = null, bestGain = 0;
+    for (const w of getCandidateWalls(s)) {
+      const child = clone(s);
+      applyMove(child, w);
+      const gain = leadingOpponentDist(child, me) - oppDist;
+      if (gain > bestGain) { bestGain = gain; bestWall = w; }
+    }
+    return bestGain >= 1 ? bestWall : base;
   }
 
   const AI = { bestMove, bestMoveEasy };
