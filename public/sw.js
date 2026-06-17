@@ -1,4 +1,4 @@
-const CACHE_NAME = "quoridor-v2";
+const CACHE_NAME = "quoridor-v3";
 const ASSETS = [
   "/",
   "/index.html",

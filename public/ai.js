@@ -540,6 +540,42 @@ const AI = (() => {
       if (elapsed + iterTime * 5 > timeLimitMs) break;
     }
 
+    // ── Convert a winning position instead of dithering ──
+    //
+    // The evaluation scores the path differential (oppDist − myDist), so when
+    // we're already comfortably ahead, lengthening the opponent with another
+    // wall frequently out-scores simply advancing — even though advancing is
+    // what actually wins. Taking the raw maximum then looks like aimless
+    // shuffling or wall-spam: it still wins, but plays badly (sideways paces,
+    // useless walls). So when we're clearly winning and not in a proven mate,
+    // prefer the best *advancing* pawn move — provided the search still rates it
+    // as clearly winning (within EPS of the best). The search and evaluation are
+    // untouched; this only re-selects among moves already judged winning, so
+    // play when the race is close or losing is unaffected.
+    // "Comfortably ahead" ≈ 3 steps up in the path race. When we're there, a
+    // padding wall often out-scores advancing by an arbitrary margin (deeper
+    // search rates the pad even higher) — but padding doesn't win, advancing
+    // does. So we don't compare against the padded best; we just require the
+    // advancing move to *itself* still be comfortably winning.
+    const LEAD = 30;
+    if (bestScore >= LEAD && Math.abs(bestScore) < 9000 && reachedDepth >= 1) {
+      const myDist = shortestPath(s, aiPlayer);
+      let bestAdv = null, bestAdvScore = -Infinity;
+      for (const to of getPawnMoves(s, aiPlayer)) {
+        const probe = clone(s);
+        probe.pawns[aiPlayer] = [to[0], to[1]];
+        if (shortestPath(probe, aiPlayer) >= myDist) continue;  // only moves that get us closer
+        const child = clone(s);
+        applyMove(child, { type: "move", to });
+        const sc = backupScore(minimax(child, reachedDepth - 1, -Infinity, Infinity, aiPlayer, child.cp === aiPlayer).score);
+        if (sc > bestAdvScore) { bestAdvScore = sc; bestAdv = { type: "move", to }; }
+      }
+      if (bestAdv && bestAdvScore >= LEAD) {   // advancing keeps a comfortable lead → convert the win
+        bestMoveFound = bestAdv;
+        bestScore = bestAdvScore;
+      }
+    }
+
     AI._lastDepth = reachedDepth;  // for debugging/telemetry
     AI._lastScore = bestScore;
 
