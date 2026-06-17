@@ -403,45 +403,51 @@
 
 <h2>how long that takes</h2>
 
-<p>Measured on this device, starting from the opening position:</p>
+<p>Measured on this device, from a cluttered middlegame position:</p>
 
 <div class="bars" id="timing-bars">
   <div class="bar-row">
     <span class="bar-label">depth 1</span>
-    <div class="bar-track"><div class="bar-fill" style="width: 36%"></div></div>
-    <span class="bar-value">~30 ms</span>
+    <div class="bar-track"><div class="bar-fill" style="width: 22%"></div></div>
+    <span class="bar-value">~0.5 ms</span>
   </div>
   <div class="bar-row">
     <span class="bar-label">depth 2</span>
-    <div class="bar-track"><div class="bar-fill" style="width: 58%"></div></div>
-    <span class="bar-value">~250 ms</span>
+    <div class="bar-track"><div class="bar-fill" style="width: 48%"></div></div>
+    <span class="bar-value">~5 ms</span>
   </div>
   <div class="bar-row">
     <span class="bar-label">depth 3</span>
-    <div class="bar-track"><div class="bar-fill" style="width: 76%"></div></div>
-    <span class="bar-value">~1.4 s</span>
+    <div class="bar-track"><div class="bar-fill" style="width: 68%"></div></div>
+    <span class="bar-value">~30 ms</span>
   </div>
   <div class="bar-row">
     <span class="bar-label">depth 4</span>
     <div class="bar-track"><div class="bar-fill" style="width: 100%"></div></div>
-    <span class="bar-value">~14 s</span>
+    <span class="bar-value">~0.4 s</span>
   </div>
   <p style="font-family:'DM Mono',monospace; font-size:0.65rem; color:var(--text-light); margin-top:10px; text-align:right;">log scale</p>
 </div>
 
-<p>Every extra ply costs five to ten times as much time as the one before (the chart is on a log scale to keep the shorter bars visible; the actual growth is exponential). The computer has a two-second budget per move, which caps it at depth 4. In the cluttered middlegame it usually manages three; in simpler endgames it gets to four.</p>
+<p>Each extra ply costs several times as much as the one before (the chart is on a log scale to keep the shorter bars visible; the real growth is exponential). The hardest setting searches to depth four — well under a second here, comfortably inside its budget — and the optional move hint goes one ply deeper still, to depth five (about 1.7 seconds).</p>
 
 <h2>why it plays well</h2>
 
 <p>At the bottom of the search tree, every position needs a score. The formula is short:</p>
 
-<p class="mono" style="text-align:center; font-size: 0.95rem; color: var(--text-mid); margin: 24px 0;">
-  score = (opponent's distance − my distance) × 10 + (my walls − opponent's walls) × 2
+<p class="mono" style="text-align:center; font-size: 0.95rem; color: var(--text-mid); margin: 24px 0; line-height: 2;">
+  score = (opponent's distance − my distance) × 10<br>
+  + (my walls − opponent's walls) × 2<br>
+  + (5 if it is my turn, otherwise −5)
 </p>
 
-<p>Two ingredients: am I closer to my goal than my opponent, and do I have more walls in hand. Nothing else. The computer doesn't know about openings or traps or good squares. It just counts path length and wall inventory, and reaches far enough forward in the search to let tactics — jumps, forks, forced sequences — emerge on their own.</p>
+<p>Three ingredients: am I closer to my goal than my opponent, do I have more walls in hand, and is it my turn to move. The last is worth half a step — whoever is on the move can shorten their path next — and it keeps the computer from treating a position as equal when really one side is a tempo ahead. Nothing else. The computer doesn't know about openings or traps or good squares. It just counts path length, wall inventory and whose turn it is, and reaches far enough forward in the search to let tactics — jumps, forks, forced sequences — emerge on their own. (Reaching a goal is scored separately, as a decisive ±10000 that swamps everything above, so a win is always preferred to merely looking good.)</p>
 
 <p>There is one positional shortcut worth mentioning. The computer never considers placing a wall far from every pawn. Walls in the corner, with nothing to block, are nearly always pointless, and examining them slows the search. Filtering them out leaves 20 to 40 candidates instead of 128. It is a safe simplification — but it does mean the computer can miss an unusual long-range wall play.</p>
+
+<p>The three difficulty settings change only how far ahead it looks. Medium and hard share the formula above and search two plies and four respectively. Easy doesn't search at all: it scores its immediate moves on path length alone and plays greedily — racing you in the open, and raising a wall only once it has fallen behind and you are closing on your goal. So easy reacts; medium and hard plan.</p>
+
+<p>A note on the constants. The ×10 and ×2 are hand-chosen, and only their ratio really carries meaning — a step of progress is worth about five spare walls in hand. They were reasoned out, not learned. (This project also contains a separate, self-trained neural network — an AlphaZero-style policy-and-value net that learned its own evaluation from self-play — but the browser keeps the hand-tuned formula, because it runs instantly with nothing to download and no server to call.)</p>
 
 <p>A strong human plays roughly the same way: count path lengths, imagine a few replies, pick the move that leaves you best off. The computer just does it more exhaustively.</p>
 

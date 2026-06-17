@@ -1374,12 +1374,16 @@ async function tryAiMove() {
   // Run AI in a setTimeout to let the UI update
   setTimeout(async () => {
     try {
-      // Easy: depth 1 (pure greedy, no opponent-reply lookahead).
-      // Medium: depth 2.
-      // Hard: depth 4 with iterative deepening.
-      const maxDepth = aiDepth === 1 ? 1 : aiDepth === 2 ? 2 : 4;
-      const timeBudget = aiDepth === 1 ? 200 : aiDepth === 2 ? 500 : 1800;
-      const move = AI.bestMove(state, maxDepth, timeBudget);
+      // Easy: 0-ply greedy that blocks when it's losing (AI.bestMoveEasy).
+      // Medium: depth 2. Hard: depth 4 with iterative deepening.
+      let move;
+      if (aiDepth === 1) {
+        move = AI.bestMoveEasy(state);
+      } else {
+        const maxDepth = aiDepth === 2 ? 2 : 4;
+        const timeBudget = aiDepth === 2 ? 500 : 1800;
+        move = AI.bestMove(state, maxDepth, timeBudget);
+      }
       if (move) {
         aiThinking = false;
         await sendMove(move);
@@ -1501,9 +1505,14 @@ async function maybePlayAiMove() {
   setTimeout(async () => {
     try {
       const depth = onlineAiDepth;
-      const maxD = depth === 1 ? 1 : depth === 2 ? 2 : 4;
-      const budget = depth === 1 ? 200 : depth === 2 ? 500 : 1800;
-      const move = AI.bestMove(state, maxD, budget);
+      let move;
+      if (depth === 1) {
+        move = AI.bestMoveEasy(state);
+      } else {
+        const maxD = depth === 2 ? 2 : 4;
+        const budget = depth === 2 ? 500 : 1800;
+        move = AI.bestMove(state, maxD, budget);
+      }
       if (move) {
         const resp = await roomApiCall("move", { move });
         if (!resp.error) applyRoomState(resp);
