@@ -1158,13 +1158,18 @@ function requestHint() {
   updateActionBar();
   setTimeout(() => {
     try {
-      // Depth 5 — one ply DEEPER than the "hard" opponent (depth 4), so the
-      // hint is at least hard-strength and generally beats it. The integer-key
-      // engine runs depth 5 in ~0.1-3.7s (was 14-54s). The 10s budget lets
-      // iterative deepening reach depth 5 where it fits and fall back to depth 4
-      // on slower devices / wide-open early positions. Opening (move_count 0)
-      // still returns instantly.
-      hintMove = AI.bestMove(state, 5, 10000);
+      // Depth 4 — exactly the "hard" opponent's search, i.e. the hint is hard
+      // mode playing the move for you.
+      //
+      // Deeper is NOT better here. Measured in self-play, depth 5 loses to
+      // depth 4 (1-5 over 6 games). Odd depths end the search right after our
+      // own move, so every leaf is scored before the opponent can reply and the
+      // position reads as optimistic; even depths are balanced. Depth 6 would
+      // be even again but takes ~18s in a cluttered midgame, and in open early
+      // positions iterative deepening falls back to depth 5 — the bad parity.
+      // So 4 it is. The generous budget just guarantees depth 4 completes
+      // (measured <1s); opening (move_count 0) still returns instantly.
+      hintMove = AI.bestMove(state, 4, 5000);
     } catch (e) {
       hintMove = null;
       showError("hint failed");
