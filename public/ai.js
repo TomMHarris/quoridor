@@ -88,6 +88,7 @@ const AI = (() => {
       vb: s.vb.slice(),
       cp: s.cp,
       goals: s.goals,
+      recentAi: s.recentAi,   // shared read-only list; see REPEAT_PENALTY
     };
   }
 
@@ -342,6 +343,37 @@ const AI = (() => {
   //     prefer positions where it's our turn at short path.
   //   - Wall resource (net walls in hand). Secondary.
 
+  // ── Anti-repetition memory ──
+  //
+  // evaluate() scores a position purely by path lengths, so nothing in it
+  // rewards actually making progress. When every move ties — or when a threat
+  // lands whatever we do — the AI has no reason to prefer advancing, and will
+  // pace between two squares indefinitely. Worse, at shallow depth stepping
+  // *backwards* can score higher than advancing, because retreating pushes an
+  // unavoidable wall-block past the search horizon (the classic horizon
+  // effect): the threat is invisible, so the position "looks" better.
+  //
+  // Fix: remember the cells the pawn recently stood on and charge a small
+  // penalty for standing on one again. At 12 the penalty is just over one step
+  // of path (10), so a retreat that genuinely gains ground is still played, but
+  // giving up tempo for nothing never is. This runs inside evaluate(), so the
+  // whole search understands it — the AI won't even plan a shuffle.
+  const REPEAT_PENALTY = 12;
+  const RECENT_KEEP = 4;
+  let _recentCells = {};    // player → [cellIdx, ...], most recent first
+  let _recentAtMove = -1;   // last move_count seen, to spot undo / a new game
+
+  function noteRecentCell(player, cell, moveCount) {
+    const mc = moveCount == null ? 0 : moveCount;
+    if (mc <= 1 || mc < _recentAtMove) _recentCells = {};   // new game or undo
+    _recentAtMove = mc;
+    const idx = cell[0] * 9 + cell[1];
+    const list = _recentCells[player] || (_recentCells[player] = []);
+    if (list[0] !== idx) list.unshift(idx);
+    if (list.length > RECENT_KEEP) list.length = RECENT_KEEP;
+    return list;
+  }
+
   function evaluate(s, aiPlayer) {
     // Terminal positions. We nudge the ±10000 by the loser's remaining
     // distance so that: among wins, finishing closer to goal (i.e. sooner,
@@ -366,6 +398,13 @@ const AI = (() => {
     // Tempo: the player to move gets +5 (half a step-equivalent), since
     // they can shorten their distance on the very next ply.
     score += (s.cp === aiPlayer ? 5 : -5);
+    // Standing back on a square we recently left wastes tempo — see
+    // REPEAT_PENALTY. Applied to live positions only; terminal scores returned
+    // above are deliberately untouched.
+    if (s.recentAi !== undefined) {
+      const ap = s.pawns[aiPlayer];
+      if (s.recentAi.indexOf(ap[0] * 9 + ap[1]) !== -1) score -= REPEAT_PENALTY;
+    }
     return score;
   }
 
@@ -487,6 +526,10 @@ const AI = (() => {
     const s = fromServerState(serverState);
     const aiPlayer = s.cp;
 
+    // Record where we're standing this turn, so the search can penalise coming
+    // back to it (see REPEAT_PENALTY).
+    s.recentAi = noteRecentCell(aiPlayer, s.pawns[aiPlayer], s.move_count);
+
     // Opening shortcut: ONLY on the very first move of the game (move_count
     // === 0). Saves ~1s on the trivial opening, where there's only one
     // sensible play.
@@ -573,6 +616,43 @@ const AI = (() => {
       if (bestAdv && bestAdvScore >= LEAD) {   // advancing keeps a comfortable lead → convert the win
         bestMoveFound = bestAdv;
         bestScore = bestAdvScore;
+      }
+    }
+
+    // ── Don't stall when the search is indifferent ──
+    //
+    // The mirror of the rule above, for the other end of the scale. Retreating
+    // can out-score advancing purely because it pushes an unavoidable block
+    // past the horizon: the opponent's wall is coming either way, but only the
+    // advancing line has it inside the search, so retreating "looks" safer.
+    // Add a flat evaluation when several moves tie and the AI paces on the spot
+    // while the opponent walks home — the reported back-and-forth bug.
+    //
+    // So: if the move we picked doesn't get us closer to goal, and some
+    // advancing move scores within STALL_TOL of it, advance instead. The
+    // tolerance is ~2 steps of path, so a retreat that genuinely gains more
+    // than that (dodging a real trap) is still played. Walls are left alone —
+    // choosing to block instead of run is a legitimate plan.
+    const STALL_TOL = 20;
+    if (Math.abs(bestScore) < 9000 && reachedDepth >= 1 && bestMoveFound.type === "move") {
+      const myDist = shortestPath(s, aiPlayer);
+      const chosen = clone(s);
+      chosen.pawns[aiPlayer] = [bestMoveFound.to[0], bestMoveFound.to[1]];
+      if (shortestPath(chosen, aiPlayer) >= myDist) {   // chosen move makes no progress
+        let bestAdv = null, bestAdvScore = -Infinity;
+        for (const to of getPawnMoves(s, aiPlayer)) {
+          const probe = clone(s);
+          probe.pawns[aiPlayer] = [to[0], to[1]];
+          if (shortestPath(probe, aiPlayer) >= myDist) continue;   // advancing moves only
+          const child = clone(s);
+          applyMove(child, { type: "move", to });
+          const sc = backupScore(minimax(child, reachedDepth - 1, -Infinity, Infinity, aiPlayer, child.cp === aiPlayer).score);
+          if (sc > bestAdvScore) { bestAdvScore = sc; bestAdv = { type: "move", to }; }
+        }
+        if (bestAdv && bestAdvScore >= bestScore - STALL_TOL) {
+          bestMoveFound = bestAdv;
+          bestScore = bestAdvScore;
+        }
       }
     }
 
