@@ -744,6 +744,11 @@ let wallGhost = null;  // {wr, wc, orient} — confirmation preview (online or t
 let hintMove = null;       // best-move suggestion (move object), or null
 let hintThinking = false;  // true while the hint search is running
 let hintUsesLeft = [];     // local hot-seat only: best-move uses remaining per seat (3 each)
+let hintWorker = null;     // Web Worker running the search off the main thread
+let hintReqId = 0;         // bumped per request, so cancelled searches are ignored
+let hintTimer = null;      // interval ticking the "thinking… 4s" label
+let hintStartedAt = 0;
+let hintProgressDepth = 0; // deepest ply the running search has completed
 
 // Detect touch devices (coarse pointer, no hover) — show wall confirmation
 const isTouchDevice = window.matchMedia && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
@@ -1074,17 +1079,29 @@ function updateActionBar() {
   document.getElementById("btn-wall-confirm").style.display = hasGhost ? "" : "none";
   document.getElementById("btn-wall-cancel").style.display = hasGhost ? "" : "none";
 
+  // While searching, the button reports how deep it has got and for how long,
+  // so a long think looks like progress rather than a hung page.
+  if (hintThinking) {
+    const secs = Math.max(0, Math.round((Date.now() - hintStartedAt) / 1000));
+    hintLabel = hintProgressDepth
+      ? `thinking… depth ${hintProgressDepth} · ${secs}s`
+      : `thinking… ${secs}s`;
+  }
+
   const hintBtn = document.getElementById("btn-hint");
   // Stay visible while thinking (shows "thinking…") even though the local
   // counter was just decremented and might otherwise hide the button.
   const showHint = hintThinking || (hintAvailable && !hasGhost && !hasHint);
   hintBtn.style.display = showHint ? "" : "none";
   hintBtn.disabled = hintThinking;
-  hintBtn.textContent = hintThinking ? "thinking…" : hintLabel;
+  hintBtn.textContent = hintLabel;
   document.getElementById("btn-hint-accept").style.display = hasHint ? "" : "none";
-  document.getElementById("btn-hint-reject").style.display = hasHint ? "" : "none";
+  // The reject button doubles as "cancel" while a search is running.
+  const rejectBtn = document.getElementById("btn-hint-reject");
+  rejectBtn.style.display = (hasHint || hintThinking) ? "" : "none";
+  rejectBtn.textContent = hintThinking ? "cancel" : "dismiss";
 
-  const hideMisc = hasGhost || hasHint;
+  const hideMisc = hasGhost || hasHint || hintThinking;
   document.getElementById("btn-undo").style.display = hideMisc || onlineMode ? "none" : "";
   document.getElementById("btn-undo").disabled = !state || state.move_count === 0;
   document.getElementById("btn-new").style.display = hideMisc ? "none" : "";
@@ -1154,34 +1171,97 @@ function requestHint() {
     if ((hintUsesLeft[state.current_player] || 0) <= 0) return;
     hintUsesLeft[state.current_player]--;
   }
+  // Depth 6 in 2-player — two full plies deeper than the "hard" opponent.
+  //
+  // Only even depths are worth resting on: an odd depth ends the search right
+  // after our own move, scoring the position before the opponent can reply,
+  // which reads optimistically. Measured, depth 5 is *worse* than depth 4 while
+  // depth 6 is better, so the engine falls back to the last even depth if the
+  // clock stops it. 4-player is capped at depth 4 with a 15s ceiling: with four
+  // pawns the tree is far wider and a single depth-4 search can exceed a minute.
+  const twoPlayer = (state.num_players || 2) === 2;
+  const depth = twoPlayer ? 6 : 4;
+  const budget = twoPlayer ? 90000 : 15000;
+
   hintThinking = true;
+  hintStartedAt = Date.now();
+  hintProgressDepth = 0;
   updateActionBar();
+  // Tick the elapsed-time label while the worker searches.
+  hintTimer = setInterval(updateActionBar, 250);
+
+  const worker = startHintWorker();
+  if (worker) {
+    hintReqId++;
+    const myId = hintReqId;
+    worker.onmessage = (e) => {
+      const msg = e.data || {};
+      if (msg.id !== hintReqId) return;   // stale reply from a cancelled search
+      if (msg.type === "progress") { hintProgressDepth = msg.depth; updateActionBar(); return; }
+      finishHint(msg.type === "done" ? msg.move : null, msg.type === "error");
+    };
+    worker.onerror = () => { hintWorker = null; runHintOnMainThread(depth, budget); };
+    worker.postMessage({ id: myId, state, depth, budget });
+    return;
+  }
+  // No worker available (very old browser, or the file failed to load) — fall
+  // back to searching on the main thread. Shallower, because this one blocks
+  // the page and a depth-6 search here would hang it for tens of seconds.
+  runHintOnMainThread(4, 3000);
+}
+
+// Lazily create the search worker; returns null if workers aren't usable.
+function startHintWorker() {
+  if (hintWorker) return hintWorker;
+  if (typeof Worker === "undefined") return null;
+  try {
+    hintWorker = new Worker("/ai-worker.js");
+  } catch (e) {
+    hintWorker = null;
+  }
+  return hintWorker;
+}
+
+function runHintOnMainThread(depth, budget) {
   setTimeout(() => {
-    try {
-      // Depth 6 in 2-player — two full plies deeper than the "hard" opponent.
-      //
-      // Only EVEN depths are used (the engine now steps 2, 4, 6): an odd depth
-      // ends the search right after our own move, scoring the position before
-      // the opponent can reply, which reads optimistically. That is why depth 5
-      // measured *worse* than depth 4 in self-play. Stepping in twos means a
-      // search cut short by the clock falls back to depth 4, never 5.
-      //
-      // 4-player is capped harder: with four pawns the tree is far wider — a
-      // single depth-4 search there measured over a minute — so it gets depth 4
-      // with a 15s ceiling and takes whatever depth fits.
-      //
-      // In 2-player the budget is deliberately generous so the clock does not
-      // cut the search short: this is a "think hard for a few seconds" button.
-      // The engine enforces the ceiling internally, so these are real limits.
-      const twoPlayer = (state.num_players || 2) === 2;
-      hintMove = AI.bestMove(state, twoPlayer ? 6 : 4, twoPlayer ? 90000 : 15000);
-    } catch (e) {
-      hintMove = null;
-      showError("hint failed");
-    }
-    hintThinking = false;
-    render();
+    let move = null, failed = false;
+    try { move = AI.bestMove(state, depth, budget); }
+    catch (e) { failed = true; }
+    finishHint(move, failed);
   }, 30);
+}
+
+function finishHint(move, failed) {
+  if (hintTimer) { clearInterval(hintTimer); hintTimer = null; }
+  hintThinking = false;
+  hintMove = move || null;
+  if (failed || !move) showError("hint failed");
+  render();
+}
+
+// Drop any suggestion and kill a search still running (new game, mode switch).
+// Unlike cancelHint this refunds nothing — the game it belonged to is gone.
+function resetHintState() {
+  if (hintWorker) { hintWorker.terminate(); hintWorker = null; }
+  if (hintTimer) { clearInterval(hintTimer); hintTimer = null; }
+  hintReqId++;
+  hintMove = null;
+  hintThinking = false;
+  hintProgressDepth = 0;
+}
+
+// Cancel an in-flight search. The worker can't be interrupted mid-search, so we
+// terminate it outright and build a fresh one next time.
+function cancelHint() {
+  if (hintWorker) { hintWorker.terminate(); hintWorker = null; }
+  hintReqId++;                       // ignore anything still in flight
+  if (hintTimer) { clearInterval(hintTimer); hintTimer = null; }
+  hintThinking = false;
+  // Refund the use — the player never got a suggestion.
+  if (!vsComputer && state && hintUsesLeft[state.current_player] != null) {
+    hintUsesLeft[state.current_player]++;
+  }
+  render();
 }
 
 function acceptHint() {
@@ -1192,6 +1272,7 @@ function acceptHint() {
 }
 
 function dismissHint() {
+  if (hintThinking) { cancelHint(); return; }   // button reads "cancel" mid-search
   hintMove = null;
   render();
 }
@@ -1314,8 +1395,7 @@ async function newGame(np) {
   numPlayers = np || 2;
   vsComputer = false;
   aiThinking = false;
-  hintMove = null;       // don't carry a suggestion into a fresh local game
-  hintThinking = false;
+  resetHintState();      // don't carry a suggestion (or a running search) over
   hintUsesLeft = Array(numPlayers).fill(3);   // 3 best-move uses per player
   document.getElementById("winner-overlay").classList.remove("show");
 
@@ -1415,8 +1495,7 @@ async function newGameVsComputer(depth, humanSeatIdx = 0, np = 2) {
   aiDepth = depth;
   numPlayers = np;
   onlineMode = false;
-  hintMove = null;       // vs-computer hints are unlimited; just clear any leftover
-  hintThinking = false;
+  resetHintState();      // vs-computer hints are unlimited; just clear any leftover
 
   document.getElementById("winner-overlay").classList.remove("show");
   buildTopBar();

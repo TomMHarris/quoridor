@@ -541,7 +541,9 @@ const AI = (() => {
    * @param {number} maxDepth - Max search depth (1=easy, 2=medium, 4=hard)
    * @param {number} timeLimitMs - Soft time limit for iterative deepening
    */
-  function bestMove(serverState, maxDepth = 2, timeLimitMs = 1500) {
+  // `onDepth(depth, score)` is called after each completed iteration, so a
+  // caller running the search off the main thread can report progress.
+  function bestMove(serverState, maxDepth = 2, timeLimitMs = 1500, onDepth = null) {
     const s = fromServerState(serverState);
     const aiPlayer = s.cp;
 
@@ -597,6 +599,7 @@ const AI = (() => {
       bestScore = score;
       reachedDepth = depth;
       if (depth % 2 === 0) { evenMove = move; evenScore = score; evenDepth = depth; }
+      if (onDepth) onDepth(depth, score);
 
       // Put the best move first for next iteration — massively improves
       // alpha-beta cuts at deeper levels (principal variation search benefit).
