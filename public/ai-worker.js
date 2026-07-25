@@ -7,7 +7,8 @@
  * page can show elapsed time, the depth reached so far, and a cancel button.
  *
  * Protocol — main thread sends {id, state, depth, budget}; we reply with:
- *   {id, type: "progress", depth, score}   after each completed iteration
+ *   {id, type: "progress", depth, score, move}   after each completed iteration
+ *                                          (move = best so far, if stopped now)
  *   {id, type: "done", move, depth, score} when the search finishes
  *   {id, type: "error", message}           if it threw
  * `id` lets the page ignore replies from a search it has already cancelled.
@@ -18,8 +19,8 @@ importScripts("/ai.js");
 self.onmessage = function (e) {
   const { id, state, depth, budget } = e.data || {};
   try {
-    const move = AI.bestMove(state, depth, budget, function (d, score) {
-      self.postMessage({ id: id, type: "progress", depth: d, score: score });
+    const move = AI.bestMove(state, depth, budget, function (d, score, best) {
+      self.postMessage({ id: id, type: "progress", depth: d, score: score, move: best });
     });
     self.postMessage({
       id: id,

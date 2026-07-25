@@ -437,6 +437,41 @@ const AI = (() => {
   let _nodes = 0;
   let _aborted = false;
 
+  // ── Killer-move ordering ──
+  //
+  // Only the root list was ordered; every interior node expanded its moves in
+  // generation order, so alpha-beta got far fewer cutoffs than it should. The
+  // cheapest fix in the book: remember the last two moves that caused a cutoff
+  // at each remaining-depth and try them first at sibling nodes. A move that
+  // refuted one line usually refutes its siblings — a wall that seals the same
+  // route, a pawn step that wins the same race — so it tends to cut immediately.
+  //
+  // This cannot change the value the search returns, only how fast it gets
+  // there (it reorders siblings; alpha-beta's result is order-independent).
+  const _killers = [];
+
+  function noteKiller(depth, move) {
+    const k = _killers[depth] || (_killers[depth] = [null, null]);
+    if (k[0] && sameMove(k[0], move)) return;   // already first
+    k[1] = k[0];
+    k[0] = move;
+  }
+
+  function killersFirst(moves, depth) {
+    const k = _killers[depth];
+    if (!k || (!k[0] && !k[1])) return moves;
+    let hits = null;
+    for (let i = 0; i < moves.length; i++) {
+      const m = moves[i];
+      if ((k[0] && sameMove(m, k[0])) || (k[1] && sameMove(m, k[1]))) (hits || (hits = [])).push(i);
+    }
+    if (!hits) return moves;
+    const out = [];
+    for (const i of hits) out.push(moves[i]);
+    for (let i = 0; i < moves.length; i++) if (hits.indexOf(i) === -1) out.push(moves[i]);
+    return out;
+  }
+
   function minimax(s, depth, alpha, beta, aiPlayer, maximizing, orderedMoves = null) {
     if (_aborted) return { score: 0, move: null };
     // Check the clock every 4096 nodes — often enough to stop promptly, rare
@@ -455,7 +490,7 @@ const AI = (() => {
     } else {
       const pawnMoves = getPawnMoves(s, s.cp).map(to => ({ type: "move", to }));
       const wallMoves = getCandidateWalls(s);
-      allMoves = [...pawnMoves, ...wallMoves];
+      allMoves = killersFirst([...pawnMoves, ...wallMoves], depth);
     }
 
     if (allMoves.length === 0) return { score: evaluate(s, aiPlayer), move: null };
@@ -471,7 +506,7 @@ const AI = (() => {
         const score = backupScore(raw);
         if (score > maxScore) { maxScore = score; bestMove = move; }
         alpha = Math.max(alpha, score);
-        if (beta <= alpha) break;
+        if (beta <= alpha) { noteKiller(depth, move); break; }
       }
       return { score: maxScore, move: bestMove };
     } else {
@@ -483,7 +518,7 @@ const AI = (() => {
         const score = backupScore(raw);
         if (score < minScore) { minScore = score; bestMove = move; }
         beta = Math.min(beta, score);
-        if (beta <= alpha) break;
+        if (beta <= alpha) { noteKiller(depth, move); break; }
       }
       return { score: minScore, move: bestMove };
     }
@@ -541,8 +576,10 @@ const AI = (() => {
    * @param {number} maxDepth - Max search depth (1=easy, 2=medium, 4=hard)
    * @param {number} timeLimitMs - Soft time limit for iterative deepening
    */
-  // `onDepth(depth, score)` is called after each completed iteration, so a
-  // caller running the search off the main thread can report progress.
+  // `onDepth(depth, score, move)` is called after each completed iteration, so a
+  // caller running the search off the main thread can report progress — and can
+  // offer the best move found so far if the user doesn't want to wait for the
+  // full depth.
   function bestMove(serverState, maxDepth = 2, timeLimitMs = 1500, onDepth = null) {
     const s = fromServerState(serverState);
     const aiPlayer = s.cp;
@@ -588,6 +625,7 @@ const AI = (() => {
 
     _deadline = startTime + timeLimitMs;
     _aborted = false;
+    _killers.length = 0;   // killers are position-specific; don't carry them over
 
     for (let depth = 1; depth <= maxDepth; depth++) {
       const iterStart = Date.now();
@@ -599,7 +637,9 @@ const AI = (() => {
       bestScore = score;
       reachedDepth = depth;
       if (depth % 2 === 0) { evenMove = move; evenScore = score; evenDepth = depth; }
-      if (onDepth) onDepth(depth, score);
+      // Report the best move from the last *even* depth where we have one —
+      // that's the result we'd actually return if we stopped here.
+      if (onDepth) onDepth(depth, score, (s.np === 2 && evenMove) ? evenMove : move);
 
       // Put the best move first for next iteration — massively improves
       // alpha-beta cuts at deeper levels (principal variation search benefit).

@@ -749,6 +749,9 @@ let hintReqId = 0;         // bumped per request, so cancelled searches are igno
 let hintTimer = null;      // interval ticking the "thinking… 4s" label
 let hintStartedAt = 0;
 let hintProgressDepth = 0; // deepest ply the running search has completed
+let hintDepthUsed = 0;     // depth the finished suggestion came from (telemetry)
+let hintBestSoFar = null;      // best move the running search has found so far
+let hintBestSoFarDepth = 0;    // the depth it came from
 
 // Detect touch devices (coarse pointer, no hover) — show wall confirmation
 const isTouchDevice = window.matchMedia && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
@@ -1099,7 +1102,9 @@ function updateActionBar() {
   // The reject button doubles as "cancel" while a search is running.
   const rejectBtn = document.getElementById("btn-hint-reject");
   rejectBtn.style.display = (hasHint || hintThinking) ? "" : "none";
-  rejectBtn.textContent = hintThinking ? "cancel" : "dismiss";
+  rejectBtn.textContent = hintThinking
+    ? (hintBestSoFar ? "use best so far" : "cancel")
+    : "dismiss";
 
   const hideMisc = hasGhost || hasHint || hintThinking;
   document.getElementById("btn-undo").style.display = hideMisc || onlineMode ? "none" : "";
@@ -1179,13 +1184,21 @@ function requestHint() {
   // depth 6 is better, so the engine falls back to the last even depth if the
   // clock stops it. 4-player is capped at depth 4 with a 15s ceiling: with four
   // pawns the tree is far wider and a single depth-4 search can exceed a minute.
+  // The budget is a real ceiling (the search enforces it internally), and it
+  // buys the fallback: iterative deepening only starts depth 6 when it projects
+  // that it fits, otherwise it stops and — via the even-depth rule — hands back
+  // the depth-4 answer. So cluttered midgames get depth 6 in a few seconds,
+  // while a wide-open early board, where depth 6 can run past a minute, returns
+  // depth 4 quickly instead of making you wait for it.
   const twoPlayer = (state.num_players || 2) === 2;
   const depth = twoPlayer ? 6 : 4;
-  const budget = twoPlayer ? 90000 : 15000;
+  const budget = twoPlayer ? 45000 : 15000;
 
   hintThinking = true;
   hintStartedAt = Date.now();
   hintProgressDepth = 0;
+  hintBestSoFar = null;
+  hintBestSoFarDepth = 0;
   updateActionBar();
   // Tick the elapsed-time label while the worker searches.
   hintTimer = setInterval(updateActionBar, 250);
@@ -1197,7 +1210,13 @@ function requestHint() {
     worker.onmessage = (e) => {
       const msg = e.data || {};
       if (msg.id !== hintReqId) return;   // stale reply from a cancelled search
-      if (msg.type === "progress") { hintProgressDepth = msg.depth; updateActionBar(); return; }
+      if (msg.type === "progress") {
+        hintProgressDepth = msg.depth;
+        if (msg.move) { hintBestSoFar = msg.move; hintBestSoFarDepth = msg.depth; }
+        updateActionBar();
+        return;
+      }
+      hintDepthUsed = msg.depth || 0;   // depth the suggestion actually came from
       finishHint(msg.type === "done" ? msg.move : null, msg.type === "error");
     };
     worker.onerror = () => { hintWorker = null; runHintOnMainThread(depth, budget); };
@@ -1233,6 +1252,8 @@ function runHintOnMainThread(depth, budget) {
 
 function finishHint(move, failed) {
   if (hintTimer) { clearInterval(hintTimer); hintTimer = null; }
+  hintBestSoFar = null;
+  hintBestSoFarDepth = 0;
   hintThinking = false;
   hintMove = move || null;
   if (failed || !move) showError("hint failed");
@@ -1248,19 +1269,29 @@ function resetHintState() {
   hintMove = null;
   hintThinking = false;
   hintProgressDepth = 0;
+  hintBestSoFar = null;
+  hintBestSoFarDepth = 0;
 }
 
 // Cancel an in-flight search. The worker can't be interrupted mid-search, so we
 // terminate it outright and build a fresh one next time.
+// Stop a running search. If it has already found something, take that — a
+// shallower answer now beats a deeper one you didn't want to wait for. Only
+// refund the use when we're left with nothing to show.
 function cancelHint() {
   if (hintWorker) { hintWorker.terminate(); hintWorker = null; }
   hintReqId++;                       // ignore anything still in flight
   if (hintTimer) { clearInterval(hintTimer); hintTimer = null; }
   hintThinking = false;
-  // Refund the use — the player never got a suggestion.
-  if (!vsComputer && state && hintUsesLeft[state.current_player] != null) {
-    hintUsesLeft[state.current_player]++;
+
+  if (hintBestSoFar) {
+    hintMove = hintBestSoFar;
+    hintDepthUsed = hintBestSoFarDepth;
+  } else if (!vsComputer && state && hintUsesLeft[state.current_player] != null) {
+    hintUsesLeft[state.current_player]++;   // nothing found; don't charge for it
   }
+  hintBestSoFar = null;
+  hintBestSoFarDepth = 0;
   render();
 }
 
