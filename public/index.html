@@ -1158,18 +1158,23 @@ function requestHint() {
   updateActionBar();
   setTimeout(() => {
     try {
-      // Depth 4 — exactly the "hard" opponent's search, i.e. the hint is hard
-      // mode playing the move for you.
+      // Depth 6 in 2-player — two full plies deeper than the "hard" opponent.
       //
-      // Deeper is NOT better here. Measured in self-play, depth 5 loses to
-      // depth 4 (1-5 over 6 games). Odd depths end the search right after our
-      // own move, so every leaf is scored before the opponent can reply and the
-      // position reads as optimistic; even depths are balanced. Depth 6 would
-      // be even again but takes ~18s in a cluttered midgame, and in open early
-      // positions iterative deepening falls back to depth 5 — the bad parity.
-      // So 4 it is. The generous budget just guarantees depth 4 completes
-      // (measured <1s); opening (move_count 0) still returns instantly.
-      hintMove = AI.bestMove(state, 4, 5000);
+      // Only EVEN depths are used (the engine now steps 2, 4, 6): an odd depth
+      // ends the search right after our own move, scoring the position before
+      // the opponent can reply, which reads optimistically. That is why depth 5
+      // measured *worse* than depth 4 in self-play. Stepping in twos means a
+      // search cut short by the clock falls back to depth 4, never 5.
+      //
+      // 4-player is capped harder: with four pawns the tree is far wider — a
+      // single depth-4 search there measured over a minute — so it gets depth 4
+      // with a 15s ceiling and takes whatever depth fits.
+      //
+      // In 2-player the budget is deliberately generous so the clock does not
+      // cut the search short: this is a "think hard for a few seconds" button.
+      // The engine enforces the ceiling internally, so these are real limits.
+      const twoPlayer = (state.num_players || 2) === 2;
+      hintMove = AI.bestMove(state, twoPlayer ? 6 : 4, twoPlayer ? 90000 : 15000);
     } catch (e) {
       hintMove = null;
       showError("hint failed");

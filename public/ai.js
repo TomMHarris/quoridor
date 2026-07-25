@@ -425,7 +425,26 @@ const AI = (() => {
     return score;
   }
 
+  // ── Hard deadline ──
+  //
+  // The iterative-deepening loop can only *predict* whether the next iteration
+  // fits in the budget, and its estimate (~5x per ply) is far too optimistic in
+  // 4-player, where each extra ply multiplies the tree by much more. One
+  // mispredicted iteration used to run for a minute with nothing able to stop
+  // it. So the search itself watches the clock and bails out; bestMove then
+  // discards the unfinished iteration and keeps the last completed one.
+  let _deadline = Infinity;
+  let _nodes = 0;
+  let _aborted = false;
+
   function minimax(s, depth, alpha, beta, aiPlayer, maximizing, orderedMoves = null) {
+    if (_aborted) return { score: 0, move: null };
+    // Check the clock every 4096 nodes — often enough to stop promptly, rare
+    // enough that Date.now() costs nothing measurable.
+    if (((++_nodes) & 4095) === 0 && Date.now() > _deadline) {
+      _aborted = true;
+      return { score: 0, move: null };
+    }
     if (depth === 0 || (s.winner !== undefined && s.winner !== null)) {
       return { score: evaluate(s, aiPlayer), move: null };
     }
@@ -560,12 +579,24 @@ const AI = (() => {
     let bestScore = 0;
     let reachedDepth = 0;
 
+    // Deepen one ply at a time (fine-grained time control), but remember the
+    // last result that came from an EVEN depth — see the parity note after the
+    // loop for why we prefer it.
+    let evenMove = null, evenScore = 0, evenDepth = 0;
+
+    _deadline = startTime + timeLimitMs;
+    _aborted = false;
+
     for (let depth = 1; depth <= maxDepth; depth++) {
       const iterStart = Date.now();
       const { score, move } = minimax(s, depth, -Infinity, Infinity, aiPlayer, true, orderedMoves);
+      // Ran out of time part-way: this iteration saw only some of the moves, so
+      // its result is meaningless. Keep the last completed depth instead.
+      if (_aborted) break;
       bestMoveFound = move;
       bestScore = score;
       reachedDepth = depth;
+      if (depth % 2 === 0) { evenMove = move; evenScore = score; evenDepth = depth; }
 
       // Put the best move first for next iteration — massively improves
       // alpha-beta cuts at deeper levels (principal variation search benefit).
@@ -581,6 +612,32 @@ const AI = (() => {
       const iterTime = Date.now() - iterStart;
       const elapsed = Date.now() - startTime;
       if (elapsed + iterTime * 5 > timeLimitMs) break;
+    }
+
+    // ── Search parity: never come to rest on an odd depth ──
+    //
+    // Each ply is one player's move, so an ODD depth ends the search right
+    // after one of our own moves — the opponent never answers it inside the
+    // tree. Every leaf is then priced a half-move in our favour, and because
+    // the bias is uneven across branches (a line where we grab a wall last
+    // looks great; its refutation is one ply out of view) the search
+    // systematically over-rates whatever it just played. An EVEN depth always
+    // ends on the opponent's reply, so every line is priced complete.
+    // Measured: depth 5 loses to depth 4 in self-play, 1-5.
+    //
+    // So if the clock stopped us on an odd ply, fall back to the last even-depth
+    // result. It costs nothing — that search already ran, and the odd iteration
+    // still earned its keep by improving move ordering. A *proven* win or loss
+    // is exact regardless of parity, so those are kept as-is.
+    //
+    // Two players only. With four, a ply is one *seat*, so the balanced depth is
+    // a full round of 4 — at the depths we can actually afford there (2 or 3)
+    // neither parity is "complete", and 3 simply sees more than 2. So in
+    // 4-player we keep the deepest search we finished, whatever its parity.
+    if (s.np === 2 && reachedDepth % 2 === 1 && evenMove && Math.abs(bestScore) < 9000) {
+      bestMoveFound = evenMove;
+      bestScore = evenScore;
+      reachedDepth = evenDepth;
     }
 
     // ── Convert a winning position instead of dithering ──
@@ -613,7 +670,7 @@ const AI = (() => {
         const sc = backupScore(minimax(child, reachedDepth - 1, -Infinity, Infinity, aiPlayer, child.cp === aiPlayer).score);
         if (sc > bestAdvScore) { bestAdvScore = sc; bestAdv = { type: "move", to }; }
       }
-      if (bestAdv && bestAdvScore >= LEAD) {   // advancing keeps a comfortable lead → convert the win
+      if (!_aborted && bestAdv && bestAdvScore >= LEAD) {   // advancing keeps a comfortable lead → convert the win
         bestMoveFound = bestAdv;
         bestScore = bestAdvScore;
       }
@@ -649,7 +706,7 @@ const AI = (() => {
           const sc = backupScore(minimax(child, reachedDepth - 1, -Infinity, Infinity, aiPlayer, child.cp === aiPlayer).score);
           if (sc > bestAdvScore) { bestAdvScore = sc; bestAdv = { type: "move", to }; }
         }
-        if (bestAdv && bestAdvScore >= bestScore - STALL_TOL) {
+        if (!_aborted && bestAdv && bestAdvScore >= bestScore - STALL_TOL) {
           bestMoveFound = bestAdv;
           bestScore = bestAdvScore;
         }
