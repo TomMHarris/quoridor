@@ -336,7 +336,9 @@
     opacity: 0;
     transition: opacity 0.3s;
     pointer-events: none;
-    white-space: nowrap;
+    max-width: calc(100vw - 40px);
+    text-align: center;
+    line-height: 1.5;
   }
   .error-flash.show { opacity: 1; }
 
@@ -711,6 +713,7 @@
 </div>
 
 <script src="/ai.js"></script>
+<script src="/local-game.js"></script>
 <script>
 const BOARD = 9;
 const PAWN_CLASSES = ["pawn-light", "pawn-dark", "pawn-red", "pawn-teal"];
@@ -771,6 +774,7 @@ let roomId = null;
 let mySeat = null;
 let playerToken = null;
 let pollTimer = null;
+let pollFailures = 0;        // consecutive failed polls — drives "reconnecting…"
 let lastMoveCount = -1;
 let seatInfo = [];           // [{seat, name, is_ai, occupied}, ...]
 let onlineAiDepth = null;    // depth for AI seats in this room (null until host fills)
@@ -797,17 +801,14 @@ function setMyDisplayName(name) {
 
 // ── API ──
 
+// Local play — pass-and-play and vs computer — runs entirely in the browser.
+// The rules live in local-game.js and answer with exactly what POST /api/game
+// used to return, so nothing below had to change. It also means a local game
+// needs no network whatsoever: install the app once and two people can share a
+// device with the wifi off (and "best move" still works — the AI was always
+// client-side). Only online rooms talk to the server; see roomApiCall.
 async function apiCall(action, extra = {}) {
-  try {
-    const res = await fetch("/api/game", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, history, num_players: numPlayers, ...extra }),
-    });
-    return await res.json();
-  } catch (e) {
-    return { error: "connection error" };
-  }
+  return LocalGame.handle(action, { history, num_players: numPlayers, ...extra });
 }
 
 async function roomApiCall(action, extra = {}) {
@@ -819,8 +820,34 @@ async function roomApiCall(action, extra = {}) {
     });
     return await res.json();
   } catch (e) {
-    return { error: "connection error" };
+    return { error: "offline" };
   }
+}
+
+// The room API answers with short codes; anything unrecognised (a driver
+// message, an HTML error page) is shown truncated rather than as a wall of
+// text across the board.
+const ONLINE_ERRORS = {
+  offline: "no connection — online play needs internet",
+  online_not_configured: "online play isn't set up on this server",
+  online_unavailable: "online play is down right now",
+  room_not_found: "room not found — it may have expired",
+  room_full: "that room is full",
+  not_in_room: "you're not in this room",
+  not_your_turn: "not your turn",
+  game_not_started: "waiting for the other players",
+  invalid_move_type: "couldn't read that move",
+  only_host_can_fill: "only the host can add a computer",
+  bad_target: "couldn't poke that seat",
+};
+
+function onlineErrorText(code) {
+  if (!code) return "something went wrong";
+  return ONLINE_ERRORS[code] || String(code).slice(0, 80);
+}
+
+function showOnlineError(code) {
+  showError(onlineErrorText(code));
 }
 
 // ── Top bar (dynamic) ──
@@ -1374,7 +1401,7 @@ async function sendMove(moveData) {
   hintMove = null;  // any pending suggestion is stale once a move is made
   if (onlineMode) {
     const json = await roomApiCall("move", { move: moveData });
-    if (json.error) { showError(json.error); return; }
+    if (json.error) { showOnlineError(json.error); return; }
     applyRoomState(json);
     return;
   }
@@ -1660,6 +1687,13 @@ function updateOnlineStatus() {
 }
 
 async function createRoom(np) {
+  // Online rooms are the one thing here that genuinely needs the internet.
+  // Say so before asking for a name, rather than after.
+  if (navigator.onLine === false) {
+    showOnlineError("offline");
+    if (!state) newGame(np);
+    return;
+  }
   playerToken = getPlayerToken();
   numPlayers = np;
   // Ask for a name (uses last-saved as default)
@@ -1669,8 +1703,10 @@ async function createRoom(np) {
 
   const json = await roomApiCall("create", { num_players: np, name: getMyDisplayName() });
   if (json.error) {
-    if (json.error === "online_not_configured") showError("online not available");
-    else showError(json.error);
+    showOnlineError(json.error);
+    // Nothing to join, so don't leave the app half-online: give them a playable
+    // board (pass-and-play needs no server) instead of an empty screen.
+    if (!state) newGame(np);
     return;
   }
 
@@ -1692,6 +1728,15 @@ async function createRoom(np) {
 }
 
 async function joinRoom(id) {
+  // Opening a shared room link with no connection (a cached app launch on a
+  // plane): skip the name prompt and just give them a local game. The ?room=
+  // parameter stays in the URL on purpose, so reloading once there's signal
+  // joins the room after all.
+  if (navigator.onLine === false) {
+    showOnlineError("offline");
+    newGame(2);
+    return;
+  }
   playerToken = getPlayerToken();
   roomId = id;
   // Prompt for name on join too
@@ -1700,10 +1745,9 @@ async function joinRoom(id) {
 
   const json = await roomApiCall("join", { name: getMyDisplayName() });
   if (json.error) {
-    if (json.error === "room_not_found") showError("room not found");
-    else if (json.error === "online_not_configured") showError("online not available");
-    else showError(json.error);
-    // Fall back to local
+    showOnlineError(json.error);
+    // Fall back to local play, which works with or without a server.
+    leaveOnline();
     newGame(2);
     return;
   }
@@ -1767,7 +1811,7 @@ function refreshShareOverlay() {
 
 async function fillWithAi(depth) {
   const json = await roomApiCall("fill_ai", { ai_depth: depth });
-  if (json.error) { showError(json.error); return; }
+  if (json.error) { showOnlineError(json.error); return; }
   applyRoomState(json);
 }
 
@@ -1788,6 +1832,7 @@ async function copyShareLink() {
 
 function startPolling() {
   stopPolling();
+  pollFailures = 0;
   pollTimer = setInterval(pollRoom, 1500);
 }
 
@@ -1798,7 +1843,25 @@ function stopPolling() {
 async function pollRoom() {
   if (!onlineMode || !roomId) return;
   const json = await roomApiCall("poll", { last_move_count: lastMoveCount });
-  if (json.error) return;
+
+  if (json.error) {
+    // A single dropped poll is normal — a phone waking up, one lost packet. A
+    // run of them means the room is genuinely unreachable, which is worth
+    // saying: otherwise the board just quietly stops updating and it looks
+    // like the other player is thinking.
+    pollFailures++;
+    const el = document.getElementById("online-status");
+    if (json.error === "room_not_found") {
+      stopPolling();
+      if (el) el.textContent = "room expired";
+      showOnlineError(json.error);
+    } else if (pollFailures >= 3 && el) {
+      el.textContent = "reconnecting…";
+    }
+    return;
+  }
+
+  if (pollFailures) { pollFailures = 0; updateOnlineStatus(); }
 
   // Always re-apply seat info / nudges / status (cheap), even if game state
   // didn't change. applyRoomState ignores absent fields.
@@ -1846,6 +1909,7 @@ function showNudgeReceived() {
 
 function leaveOnline() {
   stopPolling();
+  pollFailures = 0;
   onlineMode = false;
   roomId = null;
   mySeat = null;

@@ -828,5 +828,20 @@ const AI = (() => {
   }
 
   const AI = { bestMove, bestMoveEasy };
+
+  // Rules primitives, shared with the offline local game (see local-game.js).
+  // Local play used to POST every move to the Python engine, so a game needed
+  // a live server — no internet, no pass-and-play. These are the same rules the
+  // search runs on, which is the point of sharing them rather than writing a
+  // second JS copy: a move the AI suggests can never be rejected as illegal by
+  // the local validator, because both consult this code.
+  AI.rules = {
+    create, fromServerState, clone,
+    getPawnMoves, isValidWall, applyMove,
+    shortestPath, reachedGoal,
+  };
   return AI;
 })();
+
+// Node (test harness) — browsers get the global from the const above.
+if (typeof module !== "undefined" && module.exports) module.exports = AI;

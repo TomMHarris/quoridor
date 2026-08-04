@@ -129,8 +129,13 @@ class handler(BaseHTTPRequestHandler):
                 self._handle_nudge(room_id, token, body.get("target_seat"))
             else:
                 self._json(400, {"error": f"Unknown action: {action}"})
+        except kv.StoreUnavailable as e:
+            # The store is configured but not answering — a deleted database, a
+            # rotated password, a network blip. One stable code for the client;
+            # the specifics go in `detail` for whoever is reading the logs.
+            self._json(503, {"error": "online_unavailable", "detail": str(e)[:200]})
         except Exception as e:
-            self._json(400, {"error": str(e)})
+            self._json(400, {"error": str(e)[:200]})
 
     def _handle_create(self, body, token):
         np = body.get("num_players", 2)
