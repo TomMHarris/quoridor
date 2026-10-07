@@ -1,5 +1,5 @@
 // Bump on every asset change — activate() deletes older caches.
-const CACHE_NAME = "quoridor-v4";
+const CACHE_NAME = "quoridor-v5";
 
 // Everything a local game needs. Local play (pass-and-play and vs computer)
 // runs entirely client-side, so with these cached the installed app is fully
@@ -39,16 +39,25 @@ self.addEventListener("fetch", (e) => {
   if (url.pathname.startsWith("/api/")) return;
   if (e.request.method !== "GET") return;
 
+  // Every load of the app — "/", "/?room=ab12", "/?utm_source=…" — is the same
+  // index.html, so it is stored and looked up under "/". Matching the full URL
+  // meant a room link never opened before failed offline with the browser's
+  // error page (instead of the app's local-game fallback), and the cache kept
+  // a copy of the page for every room.
+  const appPage = e.request.mode === "navigate" && url.origin === self.location.origin &&
+    (url.pathname === "/" || url.pathname === "/index.html");
+  const key = appPage ? "/" : e.request;
+
   e.respondWith(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
-      const cached = await cache.match(e.request);
+      const cached = await cache.match(key);
 
       const network = fetch(e.request).then((res) => {
         // Keep the cache warm for next launch. Opaque cross-origin responses
         // (the web font) can't always be stored, so this is best-effort.
         if (res && (res.ok || res.type === "opaque")) {
-          cache.put(e.request, res.clone()).catch(() => {});
+          cache.put(key, res.clone()).catch(() => {});
         }
         return res;
       });
@@ -60,8 +69,10 @@ self.addEventListener("fetch", (e) => {
       // hold up the launch — captive-portal wifi that accepts the connection
       // and then never answers used to hang the page. The fetch keeps running,
       // so the next launch picks up the fresh file.
+      // A server error counts as no answer too: the cached copy beats an
+      // error page.
       return Promise.race([
-        network.catch(() => cached),
+        network.then((res) => (res.ok || res.type === "opaque" ? res : cached), () => cached),
         new Promise((resolve) => setTimeout(() => resolve(cached), NET_TIMEOUT)),
       ]);
     })()

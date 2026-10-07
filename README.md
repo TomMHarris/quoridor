@@ -6,8 +6,10 @@ A minimalist Quoridor board game — play locally, online with friends, or again
 
 ## Features
 
-- **Local play** — 2 or 4 players on the same device, **fully offline**
-- **Online multiplayer** — create a room, share a link, play with friends
+- **Local play** — 2 or 4 players on the same device, **fully offline**; a game
+  in progress survives reloads and the app being closed
+- **Online multiplayer** — create a room, share a link, play with friends;
+  fill empty seats with the computer; one-tap rematch
 - **VS Computer** — minimax AI with 3 difficulty levels (easy/medium/hard)
 - **Mobile-first** — optimised for phones and tablets, installable as a PWA
 - **Board rotation** — optional rotation between turns for face-to-face play
@@ -31,15 +33,16 @@ all — no server, no wifi. Only online rooms talk to the API.
 ## Running locally
 
 ```bash
-pip install flask numpy
+pip install flask
 python3 app.py
 # Open http://localhost:5000
 ```
 
 Local and vs-computer games don't need the server at all — opening
 `public/index.html` through any static file server is enough. The Flask app adds
-the online room API, which uses an in-memory store locally (state is lost on
-restart).
+the online room API by running the same handler as the Vercel function
+(`api/room.py`), with rooms kept in memory (lost on restart) unless a store is
+configured in the environment.
 
 ## Deploying to Vercel
 
@@ -56,8 +59,19 @@ Online multiplayer needs a room store. Attach any Redis-compatible database
 
 Most Vercel storage integrations set these automatically. With none of them, the
 room API answers `online_not_configured`; if the store is set but unreachable —
-a deleted database, a rotated password — it answers `online_unavailable` and logs
-the reason. Local play is unaffected either way.
+a deleted database, a rotated password — it answers `online_unavailable` with a
+`detail` naming the variable it used and why the connection failed, and logs the
+full error to the function logs. Local play is unaffected either way.
+
+To check the store from anywhere:
+
+```bash
+curl -s -X POST https://quoridor-delta.vercel.app/api/room \
+  -H 'Content-Type: application/json' -d '{"action":"poll","room_id":"none"}'
+# healthy:  {"error": "room_not_found"}
+# broken:   {"error": "online_unavailable",
+#            "detail": "GET via REDIS_URL (redis://): host_not_found (...)"}
+```
 
 ## Architecture
 
@@ -70,13 +84,27 @@ public/              Frontend (HTML, JS, PWA assets)
   sw.js              Service worker — caches everything a local game needs
   how-it-thinks.html Explainer page for the AI
 api/                 Vercel serverless functions
-  room.py            Online room management (store-backed)
-  kv.py              Room store (Upstash REST or Redis over TCP)
+  room.py            Online room management (store-backed); `dispatch()` is
+                     shared with app.py
+  kv.py              Room store (Upstash REST, Redis over TCP, or in-memory);
+                     updates are compare-and-set, so concurrent requests can't
+                     overwrite each other
   game.py            Stateless local-game API — kept as the Python reference;
                      the browser no longer calls it
 engine.py            Quoridor game engine (rules, BFS pathfinding)
 app.py               Flask dev server (same API as Vercel functions)
 ```
+
+## Rules notes
+
+Standard Quoridor. One case the official rules leave open: in 4-player a pawn
+can be boxed in by other pawns and walls with no walls left to place. That
+player passes until they can move again (`engine.py` and `public/local-game.js`
+agree on this).
+
+Online, computer seats are played by the room creator's browser. If that
+browser goes quiet for 8 seconds (tab closed, phone locked), another player's
+browser takes the computer's turns instead.
 
 ## How the AI works
 

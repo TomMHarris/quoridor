@@ -56,6 +56,7 @@ const LocalGame = (() => {
         throw new Error("illegal move");
       }
       R().applyMove(s, { type: "move", to: [to[0], to[1]] });
+      passStuckPlayers(s);
       return;
     }
 
@@ -63,14 +64,37 @@ const LocalGame = (() => {
       const pos = move.pos, o = move.orient;
       if (!Array.isArray(pos) || (o !== "H" && o !== "V")) throw new Error("invalid wall");
       const r = pos[0], c = pos[1];
+      if (!Number.isInteger(r) || !Number.isInteger(c)) throw new Error("invalid wall");
       if (s.wr[s.cp] <= 0) throw new Error("no walls remaining");
       if (!R().isValidWall(s, r, c, o)) throw new Error("illegal wall");
       s.wallList.push([r, c, o]);
       R().applyMove(s, { type: "wall", pos: [r, c], orient: o });
+      passStuckPlayers(s);
       return;
     }
 
     throw new Error("invalid move type");
+  }
+
+  // In 4-player a pawn can be boxed in by other pawns and walls with no walls
+  // left to place. The rules don't cover it; the usual convention, used here
+  // and in engine.py, is that the player passes — otherwise the game can never
+  // continue. (Impossible in 2-player.) Skipped turns aren't history entries:
+  // replay re-derives them.
+  function passStuckPlayers(s) {
+    if (s.winner !== null) return;
+    for (let i = 0; i < s.np && !hasLegalMove(s, s.cp); i++) s.cp = (s.cp + 1) % s.np;
+  }
+
+  function hasLegalMove(s, p) {
+    if (R().getPawnMoves(s, p).length) return true;
+    if (s.wr[p] <= 0) return false;
+    for (let r = 0; r < WALL_GRID; r++) {
+      for (let c = 0; c < WALL_GRID; c++) {
+        if (R().isValidWall(s, r, c, "H") || R().isValidWall(s, r, c, "V")) return true;
+      }
+    }
+    return false;
   }
 
   function historyEntry(move) {
@@ -159,6 +183,10 @@ const LocalGame = (() => {
 
       if (action === "legal") {
         return legal(replay(history, np));
+      }
+
+      if (action === "state") {   // the position a history leads to (restoring a saved game)
+        return { state: toState(replay(history, np), history.length), history };
       }
 
       return { error: `unknown action: ${action}` };

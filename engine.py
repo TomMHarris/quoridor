@@ -26,11 +26,14 @@ Coordinate system:
     Player 3: starts (4, 8), goal = reach col 0, 5 walls
 """
 
+from __future__ import annotations
+
 from collections import deque
 from copy import deepcopy
 from typing import Optional, List, Tuple, Set, Dict
 
-import numpy as np
+# numpy is imported inside the two neural-net helpers (to_tensor, legal_mask)
+# only: the online room API uses the rules alone and should not load it.
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -319,12 +322,19 @@ class QuoridorGame:
         action, data = move
 
         if action == "move":
+            if not (len(data) == 2 and all(type(x) is int for x in data)):
+                raise ValueError(f"Illegal pawn move to {data}")
             if data not in self._get_pawn_moves(self.current_player):
                 raise ValueError(f"Illegal pawn move to {data}")
             self.pawns[self.current_player] = data
 
         elif action == "wall":
             r, c, o = data
+            # Anything but "H" would block like a "V" wall yet slip past the
+            # overlap checks, which look walls up by orientation; a fractional
+            # position would spend a wall and block nothing.
+            if o not in ("H", "V") or type(r) is not int or type(c) is not int:
+                raise ValueError(f"Illegal wall: {data}")
             if self.walls_remaining[self.current_player] <= 0:
                 raise ValueError("No walls remaining")
             if not self.is_valid_wall(r, c, o):
@@ -342,7 +352,31 @@ class QuoridorGame:
         if self._reached_goal(self.current_player):
             self.winner = self.current_player
         else:
+            self._advance_turn()
+
+    def _advance_turn(self) -> None:
+        """
+        Pass the turn on, skipping any player with no legal move.
+
+        In 4-player a pawn can be boxed in by other pawns and walls with no
+        walls left to place. The rules don't cover it; the usual convention,
+        used here and in public/local-game.js, is that the player passes —
+        otherwise the game can never continue. (Impossible in 2-player.)
+        """
+        for _ in range(self.num_players):
             self.current_player = (self.current_player + 1) % self.num_players
+            if self._has_legal_move(self.current_player):
+                return
+
+    def _has_legal_move(self, player: int) -> bool:
+        if self._get_pawn_moves(player):
+            return True
+        if self.walls_remaining[player] <= 0:
+            return False
+        return any(self.is_valid_wall(r, c, o)
+                   for r in range(self.WALL_GRID)
+                   for c in range(self.WALL_GRID)
+                   for o in ("H", "V"))
 
     # ------------------------------------------------------------------
     # Shortest path (for heuristics / evaluation)
@@ -429,6 +463,8 @@ class QuoridorGame:
             6-9   walls remaining (same order as pawns)
             10-13 distance to goal (same order as pawns)
         """
+        import numpy as np
+
         S = self.BOARD_SIZE
         cp = self.current_player
 
@@ -604,24 +640,13 @@ class MoveEncoder:
     @classmethod
     def legal_mask(cls, game: QuoridorGame) -> np.ndarray:
         """Binary mask over the action space (1 = legal)."""
+        import numpy as np
+
         mask = np.zeros(cls.TOTAL_ACTIONS, dtype=np.float32)
         pos = game.pawns[game.current_player]
         for move in game.get_legal_moves():
             mask[cls.encode(move, pos)] = 1.0
         return mask
-
-
-# ===========================================================================
-# Auto-use Cython engine when available (102x faster, identical API)
-# ===========================================================================
-
-_PythonQuoridorGame = QuoridorGame  # keep reference to Python version
-
-try:
-    from engine_fast import FastQuoridorGame as QuoridorGame  # noqa: F811
-    _USING_FAST_ENGINE = True
-except ImportError:
-    _USING_FAST_ENGINE = False
 
 
 # ===========================================================================

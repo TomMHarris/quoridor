@@ -34,6 +34,7 @@
     --text-light: #9C9688;
     --text-mid: #6B665C;
     --accent: #C03020;
+    --overlay: rgba(250, 248, 244, 0.95);
     --cell-size: 48px;
     --groove-w: 10px;
   }
@@ -49,6 +50,7 @@
     --text: #EDE8DC;
     --text-light: #8A8477;
     --text-mid: #B3AD9F;
+    --overlay: rgba(46, 42, 36, 0.96);
   }
 
   html, body { background: var(--bg); color: var(--text); transition: background 0.25s, color 0.25s; }
@@ -293,7 +295,7 @@
   .winner-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(250, 248, 244, 0.95);
+    background: var(--overlay);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -454,7 +456,7 @@
   .info-panel {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(250, 248, 244, 0.97);
+    background: var(--overlay);
     z-index: 250;
     opacity: 0;
     pointer-events: none;
@@ -756,6 +758,12 @@ let hintDepthUsed = 0;     // depth the finished suggestion came from (telemetry
 let hintBestSoFar = null;      // best move the running search has found so far
 let hintBestSoFarDepth = 0;    // the depth it came from
 
+// Bumped whenever the position is replaced rather than advanced: new game,
+// undo, joining or leaving a room. Work scheduled for the old position — a
+// computer move behind a timer, the winner banner, a poll in flight — checks
+// it and drops itself, instead of landing on a game it no longer belongs to.
+let gameGen = 0;
+
 // Detect touch devices (coarse pointer, no hover) — show wall confirmation
 const isTouchDevice = window.matchMedia && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 let isRotated = false;
@@ -782,10 +790,27 @@ let hostSeat = 0;
 let lastNudgeSeen = {};      // map seat → last timestamp we've shown a nudge for
 let myDisplayName = "";
 let onlineAiThinking = false;
+let roomStatus = null;       // "waiting" | "playing" | "finished"
+let pollInFlight = false;
+let moveInFlight = false;    // a move of ours is on its way to the server
+// AI seats are played by the host's browser. If the host has gone quiet (tab
+// closed, phone locked), any other player's browser steps in after this long.
+const AI_TAKEOVER_MS = 8000;
+let aiTurnSeen = { room: null, moveCount: -1, at: 0 };
+let aiTakenOver = null;      // room where we've had to stand in for the host
+let winnerShownFor = null;   // room whose winner banner has been shown
+let pollChain = 0;           // bumped to retire a polling loop
+const POLL_TIMEOUT_MS = 10000;
 
 function getPlayerToken() {
   let t = localStorage.getItem("quoridor_token");
-  if (!t) { t = crypto.randomUUID(); localStorage.setItem("quoridor_token", t); }
+  if (!t) {
+    // randomUUID needs a secure context: on http://LAN-IP during local
+    // testing it doesn't exist, and online play would silently do nothing.
+    t = crypto.randomUUID ? crypto.randomUUID()
+      : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem("quoridor_token", t);
+  }
   return t;
 }
 
@@ -969,8 +994,11 @@ function buildGrooveZones() {
       cross.addEventListener("click", (e) => {
         e.stopPropagation();
         const rect = cross.getBoundingClientRect();
-        const fx = Math.abs((e.clientX - rect.left) / rect.width - 0.5);
-        const fy = Math.abs((e.clientY - rect.top) / rect.height - 0.5);
+        let fx = Math.abs((e.clientX - rect.left) / rect.width - 0.5);
+        let fy = Math.abs((e.clientY - rect.top) / rect.height - 0.5);
+        // Screen offsets: on a board turned a quarter, screen-horizontal is
+        // board-vertical.
+        if (viewRotationAngle(state ? state.current_player : null) % 180 !== 0) [fx, fy] = [fy, fx];
         onGrooveClick(wr, wc, fy <= fx ? "H" : "V");
       });
       board.appendChild(cross);
@@ -1135,9 +1163,20 @@ function updateActionBar() {
 
   const hideMisc = hasGhost || hasHint || hintThinking;
   document.getElementById("btn-undo").style.display = hideMisc || onlineMode ? "none" : "";
-  document.getElementById("btn-undo").disabled = !state || state.move_count === 0;
+  document.getElementById("btn-undo").disabled = !canUndo();
   document.getElementById("btn-new").style.display = hideMisc ? "none" : "";
-  document.getElementById("btn-rotate").style.display = hideMisc || onlineMode ? "none" : "";
+  // Vs computer and online keep your own seat at the bottom, so per-turn
+  // rotation doesn't apply there.
+  document.getElementById("btn-rotate").style.display = hideMisc || onlineMode || vsComputer ? "none" : "";
+}
+
+// Undo takes back a move of yours. Vs computer that means your last move plus
+// the computer's replies, so there must be one of yours to take back; not
+// while the computer is mid-move, and not once the game is decided.
+function canUndo() {
+  if (!state || onlineMode || state.winner !== null) return false;
+  if (vsComputer) return !aiThinking && state.move_count > humanSeat;
+  return state.move_count > 0;
 }
 
 // ── Interaction ──
@@ -1145,6 +1184,7 @@ function updateActionBar() {
 function onCellClick(r, c) {
   if (!state || state.winner !== null || aiThinking) return;
   if (vsComputer && state.current_player !== humanSeat) return;
+  if (onlineMode && state.current_player !== mySeat) return;
   if (wallGhost) { wallGhost = null; render(); return; }
   if (!legalMoves.some(m => m[0] === r && m[1] === c)) return;
   sendMove({ type: "move", to: [r, c] });
@@ -1152,11 +1192,11 @@ function onCellClick(r, c) {
 
 function onGrooveClick(wr, wc, orient) {
   if (!state || state.winner !== null || aiThinking) return;
-  hintMove = null;  // starting a wall placement clears any suggestion
   if (vsComputer && state.current_player !== humanSeat) return;
   if (onlineMode && state.current_player !== mySeat) return;
   if (state.walls_remaining[state.current_player] <= 0) return;
   if (!legalWalls.some(w => w[0] === wr && w[1] === wc && w[2] === orient)) return;
+  hintMove = null;  // starting a wall placement clears any suggestion
 
   // Use ghost confirmation for online play and touch devices (phone/iPad)
   // where tiny groove lines are hard to target precisely.
@@ -1246,7 +1286,10 @@ function requestHint() {
       hintDepthUsed = msg.depth || 0;   // depth the suggestion actually came from
       finishHint(msg.type === "done" ? msg.move : null, msg.type === "error");
     };
-    worker.onerror = () => { hintWorker = null; runHintOnMainThread(depth, budget); };
+    // The worker failed to load or crashed: fall back to the main thread, at
+    // the same shallow setting as below — a depth-6 search there freezes the
+    // page for tens of seconds.
+    worker.onerror = () => { hintWorker = null; runHintOnMainThread(4, 3000); };
     worker.postMessage({ id: myId, state, depth, budget });
     return;
   }
@@ -1298,6 +1341,17 @@ function resetHintState() {
   hintProgressDepth = 0;
   hintBestSoFar = null;
   hintBestSoFarDepth = 0;
+}
+
+// The position a running search was asked about is going away — a move was
+// played or taken back — so its answer would land on the wrong turn. Stop it,
+// and don't charge a use for an answer that never arrived.
+function abandonHint() {
+  if (!hintThinking) { hintMove = null; return; }
+  if (!vsComputer && state && hintUsesLeft[state.current_player] != null) {
+    hintUsesLeft[state.current_player]++;
+  }
+  resetHintState();
 }
 
 // Cancel an in-flight search. The worker can't be interrupted mid-search, so we
@@ -1398,11 +1452,23 @@ function applyRotation(player) {
 // ── API actions ──
 
 async function sendMove(moveData) {
-  hintMove = null;  // any pending suggestion is stale once a move is made
+  abandonHint();  // a suggestion, or a search still running, is for the old position
   if (onlineMode) {
-    const json = await roomApiCall("move", { move: moveData });
+    if (moveInFlight) return;  // a double tap would post the same move twice
+    moveInFlight = true;
+    const forRoom = roomId;
+    let json;
+    try {
+      // expected_move_count names the position this move was chosen in, so the
+      // server can refuse it if the board has moved on since.
+      json = await roomApiCall("move", { move: moveData, expected_move_count: lastMoveCount });
+    } finally {
+      moveInFlight = false;
+    }
+    if (!onlineMode || roomId !== forRoom) return;            // left the room meanwhile
+    if (json.error === "stale_move") { pollRoom(); return; }  // catch up, quietly
     if (json.error) { showOnlineError(json.error); return; }
-    applyRoomState(json);
+    if (!isStaleRoomResponse(json)) applyRoomState(json);
     return;
   }
 
@@ -1422,23 +1488,30 @@ async function sendMove(moveData) {
 
   applyRotation(state.current_player);
   render();
+  saveLocalGame();
 
   if (state.winner !== null) {
-    setTimeout(() => showWinner(), 400);
+    showWinnerSoon();
   } else {
     tryAiMove();
   }
 }
 
 async function undoMove() {
-  if (!state || state.move_count === 0) return;
-  hintMove = null;
-  const json = await apiCall("undo");
-  if (json.error) { showError(json.error); return; }
+  if (!canUndo()) return;
+  abandonHint();
+  gameGen++;
+  wallGhost = null;
 
-  state = json.state;
-  history = json.history;
-
+  // Vs computer, taking back your move means taking back the computer's
+  // replies too — otherwise undo lands on the computer's turn and it just
+  // plays again. Pop until it's your turn.
+  do {
+    const json = await apiCall("undo");
+    if (json.error) { showError(json.error); break; }
+    state = json.state;
+    history = json.history;
+  } while (vsComputer && state.current_player !== humanSeat && state.move_count > 0);
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
@@ -1447,12 +1520,17 @@ async function undoMove() {
 
   applyRotation(state.current_player);
   render();
+  saveLocalGame();
+  tryAiMove();  // only acts if that left the computer to move
 }
 
 async function newGame(np) {
+  if (onlineMode) leaveOnline();
+  gameGen++;
   numPlayers = np || 2;
   vsComputer = false;
   aiThinking = false;
+  wallGhost = null;
   resetHintState();      // don't carry a suggestion (or a running search) over
   hintUsesLeft = Array(numPlayers).fill(3);   // 3 best-move uses per player
   document.getElementById("winner-overlay").classList.remove("show");
@@ -1465,19 +1543,81 @@ async function newGame(np) {
   state = json.state;
   history = json.history;
 
-  document.getElementById("board-wrapper").style.transform = "";
+  applyRotation(state.current_player);  // also resets the seat arrows
 
   const legalJson = await apiCall("legal");
   legalMoves = legalJson.pawn_moves || [];
   legalWalls = legalJson.legal_walls || [];
   shortestPaths = legalJson.shortest_paths || [];
   render();
+  saveLocalGame();
+}
+
+// ── Saved local game ──
+//
+// A local or vs-computer game survives a reload: iOS discards a backgrounded
+// web app, and "how it thinks" is a separate page. Online rooms don't need
+// this — the room link is the save.
+const SAVE_KEY = "quoridor_local_game";
+
+function saveLocalGame() {
+  if (onlineMode || !state) return;
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      v: 1, numPlayers, history, vsComputer, humanSeat, aiDepth, hintUsesLeft, autoRotate,
+    }));
+  } catch (e) { /* storage full or disabled: just don't save */ }
+}
+
+async function restoreLocalGame() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { return false; }
+  if (!saved || saved.v !== 1 || !Array.isArray(saved.history) || !saved.history.length) return false;
+  const np = saved.numPlayers === 4 ? 4 : 2;
+  // Replaying re-validates every move, so a stale or tampered save fails here.
+  const res = LocalGame.handle("state", { history: saved.history, num_players: np });
+  if (res.error) return false;
+
+  gameGen++;
+  numPlayers = np;
+  vsComputer = !!saved.vsComputer;
+  humanSeat = vsComputer && Number.isInteger(saved.humanSeat) && saved.humanSeat < np ? saved.humanSeat : 0;
+  aiDepth = [1, 2, 3].includes(saved.aiDepth) ? saved.aiDepth : 2;
+  hintUsesLeft = Array.isArray(saved.hintUsesLeft) && saved.hintUsesLeft.length === np
+    ? saved.hintUsesLeft : Array(np).fill(3);
+  autoRotate = !!saved.autoRotate;
+  document.getElementById("btn-rotate").textContent = autoRotate ? "rotate: on" : "rotate: off";
+  aiThinking = false;
+  state = res.state;
+  history = res.history;
+
+  buildTopBar();
+  const legalJson = await apiCall("legal");
+  legalMoves = legalJson.pawn_moves || [];
+  legalWalls = legalJson.legal_walls || [];
+  shortestPaths = legalJson.shortest_paths || [];
+  applyRotation(state.current_player);
+  render();
+  if (state.winner !== null) showWinnerSoon();
+  else tryAiMove();
+  return true;
+}
+
+// The banner waits a beat so the winning move is seen first. If the position
+// changes in that beat (undo, new game, a different room), it stays down.
+function showWinnerSoon() {
+  const gen = gameGen;
+  setTimeout(() => { if (gen === gameGen) showWinner(); }, 400);
 }
 
 function showWinner() {
+  if (!state || state.winner === null) return;
   const w = state.winner;
   document.getElementById("winner-dot").className = `player-dot ${dotClass(w)}`;
-  document.getElementById("winner-title").textContent = `${playerName(w)} wins`;
+  let who = `${playerName(w)} wins`;
+  if (vsComputer) who = w === humanSeat ? "you win" : "computer wins";
+  else if (onlineMode) who = w === mySeat ? "you win" : `${(seatInfo[w] || {}).name || playerName(w)} wins`;
+  document.getElementById("winner-title").textContent = who;
   document.getElementById("winner-sub").textContent = `${state.move_count} moves`;
   document.getElementById("winner-overlay").classList.add("show");
 }
@@ -1517,10 +1657,15 @@ async function tryAiMove() {
   if (state.current_player === humanSeat) return;
 
   aiThinking = true;
+  const gen = gameGen;
   render(); // show no legal moves while AI thinks
 
   // Run AI in a setTimeout to let the UI update
   setTimeout(async () => {
+    // Taps queued behind the previous search can land in this gap. If one of
+    // them replaced the game, this move belongs to a position that's gone —
+    // and whoever replaced it already reset aiThinking.
+    if (gen !== gameGen) return;
     try {
       // Easy: 0-ply greedy that blocks when it's losing (AI.bestMoveEasy).
       // Medium: depth 2. Hard: depth 4 with iterative deepening.
@@ -1548,12 +1693,16 @@ async function tryAiMove() {
 }
 
 async function newGameVsComputer(depth, humanSeatIdx = 0, np = 2) {
+  if (onlineMode || roomId) leaveOnline();
+  gameGen++;
   vsComputer = true;
   humanSeat = humanSeatIdx;
   aiDepth = depth;
   numPlayers = np;
-  onlineMode = false;
+  aiThinking = false;
+  wallGhost = null;
   resetHintState();      // vs-computer hints are unlimited; just clear any leftover
+  hintUsesLeft = [];
 
   document.getElementById("winner-overlay").classList.remove("show");
   buildTopBar();
@@ -1571,6 +1720,7 @@ async function newGameVsComputer(depth, humanSeatIdx = 0, np = 2) {
 
   applyRotation(state.current_player);
   render();
+  saveLocalGame();
 
   // If the human isn't on move, kick off the AI's first move
   if (state.current_player !== humanSeat) tryAiMove();
@@ -1596,6 +1746,15 @@ function applyRoomState(json) {
   if (json.seats) seatInfo = json.seats;
   if (json.ai_depth != null) onlineAiDepth = json.ai_depth;
   if (json.host_seat != null) hostSeat = json.host_seat;
+  if (json.status) roomStatus = json.status;
+
+  // Someone pressed "play again" in this finished room: follow them into the
+  // rematch.
+  if (roomStatus === "finished" && json.next_room && json.next_room !== roomId) {
+    showToast("rematch!");
+    followRoom(json.next_room);
+    return;
+  }
 
   // Show share overlay state: waiting players only see it until status flips
   if (json.status === "waiting") {
@@ -1627,8 +1786,9 @@ function applyRoomState(json) {
     updateOnlineStatus();
 
     if (state.winner !== null) {
-      stopPolling();
-      setTimeout(() => showWinner(), 400);
+      // Polling carries on (more slowly) after the win: that's how a rematch
+      // started by another player reaches us.
+      if (winnerShownFor !== roomId) { winnerShownFor = roomId; showWinnerSoon(); }
     } else {
       // If it's an AI seat's turn AND I am the host, play the move
       maybePlayAiMove();
@@ -1641,39 +1801,68 @@ function isAiSeat(seatIdx) {
 }
 
 async function maybePlayAiMove() {
-  if (!state || state.winner !== null) return;
-  if (mySeat !== hostSeat) return;            // only the host runs the search
+  if (!state || state.winner !== null || roomStatus !== "playing") return;
   if (!isAiSeat(state.current_player)) return;
-  if (onlineAiThinking) return;
-  if (!onlineAiDepth) return;
+  if (onlineAiThinking || !onlineAiDepth || mySeat == null) return;
+
+  // The host's browser plays the AI seats. Everyone else notes when the AI's
+  // turn began, and steps in only if it is still waiting AI_TAKEOVER_MS later —
+  // the host closed the tab or locked their phone. The server accepts one move
+  // per position (expected_move_count), so two browsers stepping in at once is
+  // harmless: the second is refused. Once we've had to stand in, the host is
+  // evidently gone, so later AI turns in this room are played straight away.
+  if (mySeat !== hostSeat && aiTakenOver !== roomId) {
+    if (aiTurnSeen.room !== roomId || aiTurnSeen.moveCount !== lastMoveCount) {
+      aiTurnSeen = { room: roomId, moveCount: lastMoveCount, at: Date.now() };
+      return;
+    }
+    if (Date.now() - aiTurnSeen.at < AI_TAKEOVER_MS) return;
+    aiTakenOver = roomId;
+  }
 
   onlineAiThinking = true;
+  const forRoom = roomId, forMoveCount = lastMoveCount, forState = state;
   // small defer so the UI shows the new state first
   setTimeout(async () => {
+    let resp = null;
     try {
-      const depth = onlineAiDepth;
-      let move;
-      if (depth === 1) {
-        move = AI.bestMoveEasy(state);
-      } else {
-        const maxD = depth === 2 ? 2 : 4;
-        const budget = depth === 2 ? 500 : 1800;
-        move = AI.bestMove(state, maxD, budget);
-      }
-      if (move) {
-        const resp = await roomApiCall("move", { move });
-        if (!resp.error) applyRoomState(resp);
+      if (roomId === forRoom && lastMoveCount === forMoveCount) {
+        const depth = onlineAiDepth;
+        let move;
+        if (depth === 1) {
+          move = AI.bestMoveEasy(forState);
+        } else {
+          const maxD = depth === 2 ? 2 : 4;
+          const budget = depth === 2 ? 500 : 1800;
+          move = AI.bestMove(forState, maxD, budget);
+        }
+        if (move) resp = await roomApiCall("move", { move, expected_move_count: forMoveCount });
       }
     } catch (e) {
       // swallow; another poll will retry
     }
+    // Cleared before applying, so a second AI seat moving next can start.
     onlineAiThinking = false;
+    if (resp && !resp.error && roomId === forRoom && !isStaleRoomResponse(resp)) applyRoomState(resp);
   }, 80);
+}
+
+// A room response older than the board we already show — a slow poll that
+// left before our own move's response arrived. Applying it would rewind.
+function isStaleRoomResponse(json) {
+  return json.move_count != null && json.move_count < lastMoveCount;
 }
 
 function updateOnlineStatus() {
   const el = document.getElementById("online-status");
   if (!el || !onlineMode) return;
+  // While seats are empty this reopens the invite screen (link, fill with
+  // computer), which is otherwise gone for good once closed.
+  const waiting = roomStatus === "waiting";
+  el.onclick = waiting ? showShareOverlay : null;
+  el.style.cursor = waiting ? "pointer" : "";
+  el.style.textDecoration = waiting ? "underline" : "";
+  if (waiting) { el.textContent = "waiting for players · invite"; return; }
   if (!state) { el.textContent = ""; return; }
   if (state.winner !== null) { el.textContent = ""; return; }
   if (isAiSeat(state.current_player)) {
@@ -1710,24 +1899,11 @@ async function createRoom(np) {
     return;
   }
 
-  roomId = json.room_id;
-  mySeat = json.seat;
-  onlineMode = true;
-  numPlayers = json.num_players;
-  lastNudgeSeen = {};
-
-  // Update URL
-  const url = new URL(window.location);
-  url.searchParams.set("room", roomId);
-  window.history.replaceState({}, "", url);
-
-  buildTopBar();
-  applyRoomState(json);
+  enterRoom(json);
   showShareOverlay();
-  startPolling();
 }
 
-async function joinRoom(id) {
+async function joinRoom(id, { askName = true } = {}) {
   // Opening a shared room link with no connection (a cached app launch on a
   // plane): skip the name prompt and just give them a local game. The ?room=
   // parameter stays in the URL on purpose, so reloading once there's signal
@@ -1739,33 +1915,73 @@ async function joinRoom(id) {
   }
   playerToken = getPlayerToken();
   roomId = id;
-  // Prompt for name on join too
-  const enteredName = window.prompt("Your name (visible to other players):", getMyDisplayName());
-  if (enteredName !== null) setMyDisplayName(enteredName);
+  if (askName) {
+    const enteredName = window.prompt("Your name (visible to other players):", getMyDisplayName());
+    if (enteredName !== null) setMyDisplayName(enteredName);
+  }
 
   const json = await roomApiCall("join", { name: getMyDisplayName() });
+  if (roomId !== id) return;  // went elsewhere while this was answering
   if (json.error) {
     showOnlineError(json.error);
-    // Fall back to local play, which works with or without a server.
-    leaveOnline();
+    // Fall back to local play, which works with or without a server. A room
+    // that's gone or full won't come back, so drop it from the URL; anything
+    // else (server down, no signal) might, so keep the link and a reload
+    // retries it.
+    const permanent = json.error === "room_not_found" || json.error === "room_full";
+    leaveOnline({ keepLink: !permanent });
     newGame(2);
     return;
   }
 
+  enterRoom(json);
+  if (json.status === "waiting") showShareOverlay();
+}
+
+// Take the seat the server gave us: whatever was on screen before — a local
+// game, a computer game, the last room — is over.
+function enterRoom(json) {
+  gameGen++;
+  vsComputer = false;
+  aiThinking = false;
+  wallGhost = null;
+  resetHintState();
+  document.getElementById("winner-overlay").classList.remove("show");
+
+  roomId = json.room_id;
   mySeat = json.seat;
   onlineMode = true;
   numPlayers = json.num_players;
-  lastMoveCount = json.move_count || 0;
+  lastMoveCount = -1;          // applyRoomState takes the room's own count
   lastNudgeSeen = {};
+  roomStatus = null;
+  winnerShownFor = null;
+  aiTurnSeen = { room: null, moveCount: -1, at: 0 };
+
+  const url = new URL(window.location);
+  url.searchParams.set("room", roomId);
+  window.history.replaceState({}, "", url);
 
   buildTopBar();
   applyRoomState(json);
-
-  if (json.status === "waiting") {
-    showShareOverlay();
-  }
-
   startPolling();
+}
+
+// "Play again" online. The server makes one rematch room per finished game
+// (asking twice returns the same one), and everyone still polling the old room
+// follows it there — so both players pressing the button meet in one game.
+async function requestRematch() {
+  const forRoom = roomId;
+  const json = await roomApiCall("rematch");
+  if (roomId !== forRoom) return;
+  if (json.error) { showOnlineError(json.error); return; }
+  followRoom(json.room_id);
+}
+
+function followRoom(id) {
+  if (!id || id === roomId) return;
+  stopPolling();
+  joinRoom(id, { askName: false });
 }
 
 function showShareOverlay() {
@@ -1830,19 +2046,43 @@ async function copyShareLink() {
   }
 }
 
+// One poll at a time, the next scheduled once the last has answered. With a
+// fixed interval, a slow answer could arrive after a newer one and rewind the
+// board. A finished room is polled more slowly, only to catch a rematch.
 function startPolling() {
   stopPolling();
   pollFailures = 0;
-  pollTimer = setInterval(pollRoom, 1500);
+  const chain = pollChain;
+  const tick = async () => {
+    await pollRoom();
+    if (chain === pollChain) pollTimer = setTimeout(tick, roomStatus === "finished" ? 3000 : 1500);
+  };
+  pollTimer = setTimeout(tick, 1500);
 }
 
 function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  pollChain++;
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+}
+
+// A request that hangs (a phone between networks) must not stall the loop.
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise(res => setTimeout(() => res({ error: "timeout" }), ms))]);
 }
 
 async function pollRoom() {
-  if (!onlineMode || !roomId) return;
-  const json = await roomApiCall("poll", { last_move_count: lastMoveCount });
+  if (!onlineMode || !roomId || pollInFlight) return;
+  pollInFlight = true;
+  const forRoom = roomId;
+  let json;
+  try {
+    json = await withTimeout(roomApiCall("poll", { last_move_count: lastMoveCount }), POLL_TIMEOUT_MS);
+  } finally {
+    pollInFlight = false;
+  }
+  // Left or switched rooms while this was in flight: it describes a game
+  // that's no longer on screen.
+  if (!onlineMode || roomId !== forRoom) return;
 
   if (json.error) {
     // A single dropped poll is normal — a phone waking up, one lost packet. A
@@ -1862,6 +2102,7 @@ async function pollRoom() {
   }
 
   if (pollFailures) { pollFailures = 0; updateOnlineStatus(); }
+  if (isStaleRoomResponse(json)) return;
 
   // Always re-apply seat info / nudges / status (cheap), even if game state
   // didn't change. applyRoomState ignores absent fields.
@@ -1907,8 +2148,9 @@ function showNudgeReceived() {
   setTimeout(() => flash.classList.remove("show"), 1500);
 }
 
-function leaveOnline() {
+function leaveOnline({ keepLink = false } = {}) {
   stopPolling();
+  gameGen++;
   pollFailures = 0;
   onlineMode = false;
   roomId = null;
@@ -1916,9 +2158,12 @@ function leaveOnline() {
   seatInfo = [];
   onlineAiDepth = null;
   lastNudgeSeen = {};
-  const url = new URL(window.location);
-  url.searchParams.delete("room");
-  window.history.replaceState({}, "", url);
+  roomStatus = null;
+  if (!keepLink) {
+    const url = new URL(window.location);
+    url.searchParams.delete("room");
+    window.history.replaceState({}, "", url);
+  }
   document.getElementById("share-overlay").classList.remove("show");
   const statusEl = document.getElementById("online-status");
   if (statusEl) statusEl.textContent = "";
@@ -1935,7 +2180,7 @@ document.getElementById("btn-undo").addEventListener("click", undoMove);
 document.getElementById("btn-new").addEventListener("click", showInfo);
 document.getElementById("btn-play-again").addEventListener("click", () => {
   if (vsComputer) newGameVsComputer(aiDepth, humanSeat, numPlayers);
-  else if (onlineMode) createRoom(numPlayers);
+  else if (onlineMode) requestRematch();
   else newGame(numPlayers);
 });
 document.getElementById("btn-start-2").addEventListener("click", () => {
@@ -1959,44 +2204,47 @@ document.getElementById("btn-online-4").addEventListener("click", () => {
 // Pawn-colour choice for vs computer.
 //   2-player: humanSeat = 0 (light, first) or 1 (dark, second)
 //   4-player: humanSeat = 0..3 (clockwise: light/red/dark/teal)
-// The AI takes every seat that isn't humanSeat.
+// The AI takes every seat that isn't the chosen one. These are the menu's
+// selection only: the game in progress keeps its own humanSeat until a new
+// game is started from the menu.
 let aiNumPlayers = 2;  // 2 or 4 — chosen via the info-panel UI
+let menuSeat = 0;
 
 function updatePawnChoice() {
   // 2p toggle
   const lightBtn = document.getElementById("btn-ai-as-light");
   const darkBtn = document.getElementById("btn-ai-as-dark");
-  if (lightBtn) lightBtn.classList.toggle("active", aiNumPlayers === 2 && humanSeat === 0);
-  if (darkBtn) darkBtn.classList.toggle("active", aiNumPlayers === 2 && humanSeat === 1);
+  if (lightBtn) lightBtn.classList.toggle("active", aiNumPlayers === 2 && menuSeat === 0);
+  if (darkBtn) darkBtn.classList.toggle("active", aiNumPlayers === 2 && menuSeat === 1);
   // 4p four-color choice
   for (let i = 0; i < 4; i++) {
     const b = document.getElementById(`btn-ai-as-${i}`);
-    if (b) b.classList.toggle("active", aiNumPlayers === 4 && humanSeat === i);
+    if (b) b.classList.toggle("active", aiNumPlayers === 4 && menuSeat === i);
   }
 }
 document.getElementById("btn-ai-as-light").addEventListener("click", () => {
-  aiNumPlayers = 2; humanSeat = 0; updatePawnChoice();
+  aiNumPlayers = 2; menuSeat = 0; updatePawnChoice();
 });
 document.getElementById("btn-ai-as-dark").addEventListener("click", () => {
-  aiNumPlayers = 2; humanSeat = 1; updatePawnChoice();
+  aiNumPlayers = 2; menuSeat = 1; updatePawnChoice();
 });
 for (let i = 0; i < 4; i++) {
   document.getElementById(`btn-ai-as-${i}`).addEventListener("click", () => {
-    aiNumPlayers = 4; humanSeat = i; updatePawnChoice();
+    aiNumPlayers = 4; menuSeat = i; updatePawnChoice();
   });
 }
 
 document.getElementById("btn-ai-easy").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
-  newGameVsComputer(1, humanSeat, aiNumPlayers);
+  newGameVsComputer(1, menuSeat, aiNumPlayers);
 });
 document.getElementById("btn-ai-medium").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
-  newGameVsComputer(2, humanSeat, aiNumPlayers);
+  newGameVsComputer(2, menuSeat, aiNumPlayers);
 });
 document.getElementById("btn-ai-hard").addEventListener("click", () => {
   document.getElementById("info-panel").classList.remove("show");
-  newGameVsComputer(3, humanSeat, aiNumPlayers);
+  newGameVsComputer(3, menuSeat, aiNumPlayers);
 });
 document.getElementById("btn-info").addEventListener("click", showInfo);
 document.getElementById("btn-info-close").addEventListener("click", () => {
@@ -2011,8 +2259,10 @@ document.getElementById("info-panel").addEventListener("click", (e) => {
 
 // Theme toggle (light/dark)
 (function initTheme() {
+  // Follow the system setting until the user picks one with the toggle.
   const saved = localStorage.getItem("quoridor_theme");
-  if (saved === "dark") document.documentElement.setAttribute("data-theme", "dark");
+  const systemDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  if (saved === "dark" || (!saved && systemDark)) document.documentElement.setAttribute("data-theme", "dark");
 })();
 document.getElementById("btn-theme").addEventListener("click", () => {
   const isDark = document.documentElement.getAttribute("data-theme") === "dark";
@@ -2053,14 +2303,14 @@ buildBoard();
 buildTopBar();
 updateWallPips();
 
-setTimeout(() => {
+setTimeout(async () => {
   buildGrooveZones();
   // Check URL for room parameter
   const urlParams = new URLSearchParams(window.location.search);
   const urlRoom = urlParams.get("room");
   if (urlRoom) {
     joinRoom(urlRoom);
-  } else {
+  } else if (!(await restoreLocalGame())) {
     newGame(2);
   }
 }, 50);
